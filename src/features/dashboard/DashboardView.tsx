@@ -17,6 +17,8 @@ import {
   CheckCircle2,
   Calendar,
   SlidersHorizontal,
+  FileImage,
+  Minimize2,
 } from 'lucide-react';
 import { CollectionItem, DashboardSectionId, DocumentItem } from '../../types';
 import { DocumentCard } from '../documents/DocumentCard';
@@ -34,6 +36,7 @@ interface DashboardViewProps {
   onOpenDocument: (doc: DocumentItem) => void;
   onOpenImport: (category?: string) => void;
   onNavigateToLibrary: (filter?: { category?: string; onlyFavorites?: boolean; onlyPinned?: boolean }) => void;
+  onNavigateToTools?: (initialTab?: 'image-to-pdf' | 'compressor') => void;
   onToggleFavorite: (id: string, e: React.MouseEvent) => void;
   onTogglePinned: (id: string, e: React.MouseEvent) => void;
   onDownload: (doc: DocumentItem, e: React.MouseEvent) => void;
@@ -54,6 +57,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onOpenDocument,
   onOpenImport,
   onNavigateToLibrary,
+  onNavigateToTools,
   onToggleFavorite,
   onTogglePinned,
   onDownload,
@@ -146,6 +150,26 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   <UploadCloud className="w-4 h-4" />
                   <span>Import PDFs</span>
                 </button>
+                {onNavigateToTools && (
+                  <>
+                    <button
+                      onClick={() => onNavigateToTools('image-to-pdf')}
+                      className="flex items-center gap-2 px-4 py-3 rounded-2xl bg-sky-500/10 hover:bg-sky-500/20 text-sky-300 border border-sky-500/30 font-medium text-xs sm:text-sm transition"
+                      title="Convert Images to PDF"
+                    >
+                      <FileImage className="w-4 h-4 text-sky-400" />
+                      <span>Image to PDF</span>
+                    </button>
+                    <button
+                      onClick={() => onNavigateToTools('compressor')}
+                      className="flex items-center gap-2 px-4 py-3 rounded-2xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-medium text-xs sm:text-sm transition"
+                      title="Compress PDF file size"
+                    >
+                      <Minimize2 className="w-4 h-4 text-emerald-400" />
+                      <span>Compress PDF</span>
+                    </button>
+                  </>
+                )}
                 <button
                   onClick={onOpenLayoutModal}
                   className="flex items-center gap-2 px-4 py-3 rounded-2xl bg-slate-900/80 hover:bg-slate-800 text-slate-200 border border-slate-700/80 font-medium text-xs sm:text-sm transition"

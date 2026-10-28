@@ -21,6 +21,9 @@ import {
   LogOut,
   SlidersHorizontal,
   Cloud,
+  FileImage,
+  Minimize2,
+  Sparkles,
 } from 'lucide-react';
 import { onAuthStateChanged } from 'firebase/auth';
 import { AppSettings, CollectionItem, DashboardSectionId, DocumentItem, UserProfile } from './types';
@@ -33,6 +36,7 @@ import { firestoreService } from './lib/firestore-service';
 import { DashboardView } from './features/dashboard/DashboardView';
 import { DocumentLibraryView } from './features/documents/DocumentLibraryView';
 import { CollectionsView } from './features/collections/CollectionsView';
+import { PdfToolsView } from './features/tools/PdfToolsView';
 import { ImportModal } from './features/documents/ImportModal';
 import { PDFViewerModal } from './features/pdf-viewer/PDFViewerModal';
 import { BackupModal } from './features/backup/BackupModal';
@@ -90,7 +94,8 @@ export default function App() {
   });
 
   // Navigation
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'library' | 'collections'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'library' | 'collections' | 'tools'>('dashboard');
+  const [toolsInitialTab, setToolsInitialTab] = useState<'image-to-pdf' | 'compressor'>('image-to-pdf');
   const [libraryFilters, setLibraryFilters] = useState<{
     category?: string;
     onlyFavorites?: boolean;
@@ -407,6 +412,50 @@ export default function App() {
               </div>
               <span className="font-mono text-[10px] text-slate-400 bg-slate-900 px-2 py-0.5 rounded-full">
                 {collections.length}
+              </span>
+            </button>
+
+            <div className="pt-3 pb-1 px-3 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+              PDF Studio Tools
+            </div>
+
+            <button
+              onClick={() => {
+                setActiveTab('tools');
+                setToolsInitialTab('image-to-pdf');
+              }}
+              className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl font-medium transition ${
+                activeTab === 'tools' && toolsInitialTab === 'image-to-pdf'
+                  ? 'bg-sky-500/15 text-sky-400 border border-sky-500/30 font-semibold'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/60'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <FileImage className="w-4 h-4 text-sky-400" />
+                <span>Image to PDF</span>
+              </div>
+              <span className="text-[9px] font-mono font-bold bg-sky-500/20 text-sky-300 px-1.5 py-0.5 rounded-full">
+                NEW
+              </span>
+            </button>
+
+            <button
+              onClick={() => {
+                setActiveTab('tools');
+                setToolsInitialTab('compressor');
+              }}
+              className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl font-medium transition ${
+                activeTab === 'tools' && toolsInitialTab === 'compressor'
+                  ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 font-semibold'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/60'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <Minimize2 className="w-4 h-4 text-emerald-400" />
+                <span>PDF Compressor</span>
+              </div>
+              <span className="text-[9px] font-mono font-bold bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded-full">
+                PRO
               </span>
             </button>
 
@@ -756,6 +805,40 @@ export default function App() {
 
               <button
                 onClick={() => {
+                  setActiveTab('tools');
+                  setToolsInitialTab('image-to-pdf');
+                  setMobileMenuOpen(false);
+                }}
+                className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-slate-300 hover:bg-slate-900"
+              >
+                <div className="flex items-center gap-3">
+                  <FileImage className="w-4 h-4 text-sky-400" />
+                  <span>Image to PDF</span>
+                </div>
+                <span className="font-mono text-[10px] text-sky-400 bg-sky-500/10 px-2 py-0.5 rounded-full">
+                  NEW
+                </span>
+              </button>
+
+              <button
+                onClick={() => {
+                  setActiveTab('tools');
+                  setToolsInitialTab('compressor');
+                  setMobileMenuOpen(false);
+                }}
+                className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-slate-300 hover:bg-slate-900"
+              >
+                <div className="flex items-center gap-3">
+                  <Minimize2 className="w-4 h-4 text-emerald-400" />
+                  <span>PDF Compressor</span>
+                </div>
+                <span className="font-mono text-[10px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full">
+                  PRO
+                </span>
+              </button>
+
+              <button
+                onClick={() => {
                   setActiveTab('collections');
                   setMobileMenuOpen(false);
                 }}
@@ -814,6 +897,10 @@ export default function App() {
                 onOpenDocument={handleOpenDocument}
                 onOpenImport={handleOpenImportModal}
                 onNavigateToLibrary={handleNavigateToLibrary}
+                onNavigateToTools={tab => {
+                  setActiveTab('tools');
+                  setToolsInitialTab(tab || 'image-to-pdf');
+                }}
                 onToggleFavorite={handleToggleFavorite}
                 onTogglePinned={handleTogglePinned}
                 onDownload={handleDownload}
@@ -862,6 +949,16 @@ export default function App() {
                 onSelectCategoryInLibrary={catId => handleNavigateToLibrary({ category: catId })}
               />
             )}
+
+            {activeTab === 'tools' && (
+              <PdfToolsView
+                collections={collections}
+                documents={documents}
+                onOpenDocument={handleOpenDocument}
+                onRefreshVault={refreshVaultData}
+                initialTab={toolsInitialTab}
+              />
+            )}
           </div>
         </main>
 
@@ -903,6 +1000,19 @@ export default function App() {
           </button>
 
           <button
+            onClick={() => {
+              setActiveTab('tools');
+              setToolsInitialTab('image-to-pdf');
+            }}
+            className={`flex flex-col items-center gap-1 py-1 px-3 text-[10px] font-medium transition ${
+              activeTab === 'tools' ? 'text-sky-400 font-bold' : 'text-slate-400'
+            }`}
+          >
+            <Sparkles className="w-5 h-5" />
+            <span>Tools</span>
+          </button>
+
+          <button
             onClick={() => setActiveTab('collections')}
             className={`flex flex-col items-center gap-1 py-1 px-3 text-[10px] font-medium transition ${
               activeTab === 'collections' ? 'text-sky-400 font-bold' : 'text-slate-400'
@@ -914,7 +1024,7 @@ export default function App() {
 
           <button
             onClick={() => setIsSettingsOpen(true)}
-            className="flex flex-col items-center gap-1 py-1 px-3 text-[10px] font-medium text-slate-400"
+            className="flex flex-col items-center gap-1 py-1 px-2 text-[10px] font-medium text-slate-400"
           >
             <Settings className="w-5 h-5" />
             <span>Settings</span>
