@@ -1,3 +1,4 @@
+import JSZip from 'jszip';
 import { db } from './database';
 import { DocumentItem, DocumentBinary } from '../types';
 import { inspectPDF } from './pdf-service';
@@ -58,7 +59,8 @@ export const documentService = {
     }
 
     // Default display name clean up
-    const cleanDisplayName = inspected.extractedTitle || fileName.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
+    const cleanDisplayName =
+      inspected.extractedTitle || fileName.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
 
     const newDocId = `doc_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
     const newDoc: DocumentItem = {
@@ -75,6 +77,7 @@ export const documentService = {
       isPinned: false,
       importedAt: Date.now(),
       fileHash: inspected.fileHash,
+      isPasswordProtected: inspected.isPasswordProtected || false,
       version: 1,
     };
 
@@ -101,7 +104,11 @@ export const documentService = {
     files: File[],
     options?: ImportOptions,
     onProgress?: (processed: number, total: number, currentName: string) => void
-  ): Promise<{ imported: DocumentItem[]; duplicates: { file: File; existing: DocumentItem }[]; errors: { name: string; error: string }[] }> {
+  ): Promise<{
+    imported: DocumentItem[];
+    duplicates: { file: File; existing: DocumentItem }[];
+    errors: { name: string; error: string }[];
+  }> {
     const imported: DocumentItem[] = [];
     const duplicates: { file: File; existing: DocumentItem }[] = [];
     const errors: { name: string; error: string }[] = [];
@@ -163,7 +170,18 @@ export const documentService = {
    */
   async updateDocument(
     id: string,
-    updates: Partial<Pick<DocumentItem, 'displayName' | 'category' | 'tags' | 'description' | 'isFavorite' | 'isPinned'>>
+    updates: Partial<
+      Pick<
+        DocumentItem,
+        | 'displayName'
+        | 'category'
+        | 'tags'
+        | 'description'
+        | 'isFavorite'
+        | 'isPinned'
+        | 'isPasswordProtected'
+      >
+    >
   ): Promise<void> {
     await db.documents.update(id, updates);
   },
@@ -211,6 +229,37 @@ export const documentService = {
   },
 
   /**
+   * Batch update category for selected documents
+   */
+  async batchUpdateCategory(ids: string[], newCategory: string): Promise<void> {
+    await db.transaction('rw', db.documents, async () => {
+      for (const id of ids) {
+        await db.documents.update(id, { category: newCategory });
+      }
+    });
+  },
+
+  /**
+   * Batch add tag to selected documents
+   */
+  async batchAddTag(ids: string[], tagToAdd: string): Promise<void> {
+    const cleanTag = tagToAdd.trim().toLowerCase().replace(/[^a-z0-9-_]/g, '');
+    if (!cleanTag) return;
+
+    await db.transaction('rw', db.documents, async () => {
+      for (const id of ids) {
+        const item = await db.documents.get(id);
+        if (item) {
+          const currentTags = item.tags || [];
+          if (!currentTags.includes(cleanTag)) {
+            await db.documents.update(id, { tags: [...currentTags, cleanTag] });
+          }
+        }
+      }
+    });
+  },
+
+  /**
    * Get all unique tags across all documents
    */
   async getAllTags(): Promise<string[]> {
@@ -251,6 +300,44 @@ export const documentService = {
     const a = document.createElement('a');
     a.href = url;
     a.download = doc.fileName.endsWith('.pdf') ? doc.fileName : `${doc.fileName}.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  },
+
+  /**
+   * Bulk download multiple documents packaged into a single ZIP file
+   */
+  async downloadBatchAsZip(
+    docs: DocumentItem[],
+    onProgress?: (percent: number, status: string) => void
+  ): Promise<void> {
+    if (docs.length === 0) return;
+
+    const zip = new JSZip();
+    for (let i = 0; i < docs.length; i++) {
+      const d = docs[i];
+      if (onProgress) {
+        onProgress(Math.floor((i / docs.length) * 80), `Archiving ${d.displayName}...`);
+      }
+      const binary = await this.getDocumentBinary(d.id);
+      if (binary) {
+        const safeName = d.fileName.endsWith('.pdf') ? d.fileName : `${d.fileName}.pdf`;
+        zip.file(safeName, binary);
+      }
+    }
+
+    if (onProgress) onProgress(85, 'Compressing ZIP package...');
+    const zipBlob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' });
+
+    const dateStr = new Date().toISOString().split('T')[0];
+    const fileName = `DocPocket_Selected_${docs.length}_Files_${dateStr}.zip`;
+
+    const url = URL.createObjectURL(zipBlob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);

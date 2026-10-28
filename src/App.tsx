@@ -843,6 +843,7 @@ export default function App() {
                 onDelete={handleDeleteTrigger}
                 onBulkDelete={handleBulkDelete}
                 onManageCollections={() => setIsManageCollectionsOpen(true)}
+                onBatchOperationCompleted={refreshVaultData}
               />
             )}
 

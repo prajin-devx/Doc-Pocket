@@ -1,8 +1,12 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import { defineConfig } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
+
+const __filename = fileURLToPath(import.meta.url);
+const currentDir = path.dirname(__filename);
 
 export default defineConfig(() => {
   return {
@@ -11,7 +15,13 @@ export default defineConfig(() => {
       tailwindcss(),
       VitePWA({
         registerType: 'autoUpdate',
-        includeAssets: ['icon.svg', 'apple-touch-icon.png', 'pwa-192x192.png', 'pwa-512x512.png'],
+        includeAssets: [
+          'icon.svg',
+          'apple-touch-icon.png',
+          'pwa-192x192.png',
+          'pwa-512x512.png',
+          'pdf.worker.min.mjs',
+        ],
         manifest: {
           id: '/',
           name: 'DocPocket — Personal PDF Vault',
@@ -44,7 +54,8 @@ export default defineConfig(() => {
           ],
         },
         workbox: {
-          globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
+          globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2,mjs}'],
+          maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
         },
         devOptions: {
           enabled: true,
@@ -53,7 +64,20 @@ export default defineConfig(() => {
     ],
     resolve: {
       alias: {
-        '@': path.resolve(__dirname, '.'),
+        '@': currentDir,
+      },
+    },
+    build: {
+      chunkSizeWarningLimit: 1200,
+      rollupOptions: {
+        output: {
+          manualChunks(id: string) {
+            if (id.includes('pdfjs-dist')) return 'pdfjs-vendor';
+            if (id.includes('firebase')) return 'firebase-vendor';
+            if (id.includes('jszip')) return 'jszip-vendor';
+            if (id.includes('dexie')) return 'dexie-vendor';
+          },
+        },
       },
     },
     server: {

@@ -13,6 +13,7 @@ export interface DocumentItem {
   importedAt: number;
   lastOpenedAt?: number;
   fileHash?: string;
+  isPasswordProtected?: boolean;
   version?: number;
 }
 

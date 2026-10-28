@@ -1,8 +1,13 @@
 import * as pdfjsLib from 'pdfjs-dist';
 
-// Ensure worker is configured to the local worker file in public/
+// Ensure worker is configured to the local worker file with CDN fallback
 if (typeof window !== 'undefined') {
-  pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
+  try {
+    pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
+  } catch {
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      'https://unpkg.com/pdfjs-dist@4.0.379/build/pdf.worker.min.mjs';
+  }
 }
 
 export interface PDFMetadataResult {
@@ -10,6 +15,7 @@ export interface PDFMetadataResult {
   thumbnailDataUrl?: string;
   extractedTitle?: string;
   fileHash: string;
+  isPasswordProtected?: boolean;
 }
 
 /**
@@ -17,24 +23,29 @@ export interface PDFMetadataResult {
  */
 export async function computeFileHash(buffer: ArrayBuffer): Promise<string> {
   if (typeof crypto !== 'undefined' && crypto.subtle) {
-    const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    try {
+      const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    } catch {
+      // fallback
+    }
   }
-  // Fallback simple checksum if SubtleCrypto is unavailable
+  // Fallback checksum if SubtleCrypto is unavailable
   let hash = 0;
   const bytes = new Uint8Array(buffer);
   for (let i = 0; i < Math.min(bytes.length, 65536); i++) {
     hash = ((hash << 5) - hash) + bytes[i];
     hash |= 0;
   }
-  return `fallback-${Math.abs(hash)}-${buffer.byteLength}`;
+  return `chk-${Math.abs(hash)}-${buffer.byteLength}`;
 }
 
 /**
- * Inspects a PDF ArrayBuffer, extracts page count, metadata, and generates a preview thumbnail
+ * Inspects a PDF ArrayBuffer, extracts page count, metadata, and generates a preview thumbnail.
+ * Handles password-protected PDFs gracefully.
  */
-export async function inspectPDF(buffer: ArrayBuffer): Promise<PDFMetadataResult> {
+export async function inspectPDF(buffer: ArrayBuffer, password?: string): Promise<PDFMetadataResult> {
   const fileHash = await computeFileHash(buffer);
 
   try {
@@ -44,6 +55,7 @@ export async function inspectPDF(buffer: ArrayBuffer): Promise<PDFMetadataResult
       data: new Uint8Array(bufferClone),
       cMapUrl: 'https://unpkg.com/pdfjs-dist@4.0.379/cmaps/',
       cMapPacked: true,
+      password: password || undefined,
     });
 
     const pdfDoc = await loadingTask.promise;
@@ -65,8 +77,7 @@ export async function inspectPDF(buffer: ArrayBuffer): Promise<PDFMetadataResult
     try {
       const page = await pdfDoc.getPage(1);
       const viewport = page.getViewport({ scale: 1 });
-      
-      // Target thumbnail width around 240px
+
       const targetWidth = 240;
       const scale = targetWidth / viewport.width;
       const scaledViewport = page.getViewport({ scale });
@@ -78,14 +89,13 @@ export async function inspectPDF(buffer: ArrayBuffer): Promise<PDFMetadataResult
         canvas.width = scaledViewport.width;
         canvas.height = scaledViewport.height;
 
-        // Render white background first
         ctx.fillStyle = '#ffffff';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
 
         await page.render({
           canvasContext: ctx,
           viewport: scaledViewport,
-          canvas: canvas as unknown as HTMLCanvasElement,
+          canvas,
         }).promise;
 
         thumbnailDataUrl = canvas.toDataURL('image/jpeg', 0.82);
@@ -99,8 +109,25 @@ export async function inspectPDF(buffer: ArrayBuffer): Promise<PDFMetadataResult
       thumbnailDataUrl,
       extractedTitle,
       fileHash,
+      isPasswordProtected: false,
     };
-  } catch (err) {
+  } catch (err: unknown) {
+    // Check if error is due to password protection
+    if (
+      err &&
+      typeof err === 'object' &&
+      'name' in err &&
+      (err.name === 'PasswordException' || String(err).includes('password') || String(err).includes('Password'))
+    ) {
+      return {
+        pageCount: 1,
+        thumbnailDataUrl: undefined,
+        extractedTitle: undefined,
+        fileHash,
+        isPasswordProtected: true,
+      };
+    }
+
     console.error('PDF parsing error:', err);
     throw new Error(err instanceof Error ? err.message : 'Invalid or corrupted PDF file');
   }

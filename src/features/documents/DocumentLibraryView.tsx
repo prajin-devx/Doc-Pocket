@@ -16,12 +16,17 @@ import {
   SlidersHorizontal,
   ChevronDown,
   Sparkles,
+  Archive,
+  FolderInput,
+  Loader2,
+  Plus,
 } from 'lucide-react';
 import { CollectionItem, DocumentItem, SortField, SortOrder, ViewMode } from '../../types';
 import { DocumentCard } from './DocumentCard';
 import { DocumentRow } from './DocumentRow';
 import { CategoryIcon } from '../../components/common/CategoryIcon';
 import { formatBytes } from '../../lib/storage-service';
+import { documentService } from '../../lib/document-service';
 
 interface DocumentLibraryViewProps {
   documents: DocumentItem[];
@@ -39,6 +44,7 @@ interface DocumentLibraryViewProps {
   onDelete: (doc: DocumentItem, e: React.MouseEvent) => void;
   onBulkDelete: (ids: string[]) => void;
   onManageCollections: () => void;
+  onBatchOperationCompleted?: () => void;
 }
 
 export const DocumentLibraryView: React.FC<DocumentLibraryViewProps> = ({
@@ -57,6 +63,7 @@ export const DocumentLibraryView: React.FC<DocumentLibraryViewProps> = ({
   onDelete,
   onBulkDelete,
   onManageCollections,
+  onBatchOperationCompleted,
 }) => {
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
   const [searchQuery, setSearchQuery] = useState<string>(initialSearchQuery);
@@ -72,6 +79,65 @@ export const DocumentLibraryView: React.FC<DocumentLibraryViewProps> = ({
   // Batch selection
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isSelectionMode, setIsSelectionMode] = useState(false);
+  const [isBatchWorking, setIsBatchWorking] = useState(false);
+  const [batchWorkMessage, setBatchWorkMessage] = useState('');
+  const [showTagPrompt, setShowTagPrompt] = useState(false);
+  const [batchTagInput, setBatchTagInput] = useState('');
+
+  // Batch actions
+  const handleBatchMoveCategory = async (targetCategory: string) => {
+    if (!targetCategory || selectedIds.size === 0) return;
+    setIsBatchWorking(true);
+    setBatchWorkMessage('Updating collections...');
+    try {
+      await documentService.batchUpdateCategory(Array.from(selectedIds), targetCategory);
+      setSelectedIds(new Set());
+      setIsSelectionMode(false);
+      onBatchOperationCompleted?.();
+    } catch (err) {
+      alert('Failed to update category: ' + (err instanceof Error ? err.message : 'Error'));
+    } finally {
+      setIsBatchWorking(false);
+      setBatchWorkMessage('');
+    }
+  };
+
+  const handleBatchAddTagSubmit = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!batchTagInput.trim() || selectedIds.size === 0) return;
+    setIsBatchWorking(true);
+    setBatchWorkMessage('Adding tags...');
+    try {
+      await documentService.batchAddTag(Array.from(selectedIds), batchTagInput.trim());
+      setBatchTagInput('');
+      setShowTagPrompt(false);
+      setSelectedIds(new Set());
+      setIsSelectionMode(false);
+      onBatchOperationCompleted?.();
+    } catch (err) {
+      alert('Failed to add tag: ' + (err instanceof Error ? err.message : 'Error'));
+    } finally {
+      setIsBatchWorking(false);
+      setBatchWorkMessage('');
+    }
+  };
+
+  const handleBatchDownloadZip = async () => {
+    if (selectedIds.size === 0) return;
+    setIsBatchWorking(true);
+    setBatchWorkMessage('Packaging ZIP archive...');
+    try {
+      const selectedDocs = documents.filter(d => selectedIds.has(d.id));
+      await documentService.downloadBatchAsZip(selectedDocs, (_p, status) => {
+        setBatchWorkMessage(status);
+      });
+    } catch (err) {
+      alert('Failed to download ZIP: ' + (err instanceof Error ? err.message : 'Error'));
+    } finally {
+      setIsBatchWorking(false);
+      setBatchWorkMessage('');
+    }
+  };
 
   // Filter & Sort Logic
   const filteredDocuments = useMemo(() => {
@@ -237,29 +303,117 @@ export const DocumentLibraryView: React.FC<DocumentLibraryViewProps> = ({
 
       {/* Batch Selection Action Bar */}
       {isSelectionMode && (
-        <div className="flex items-center justify-between p-3 rounded-2xl bg-sky-950/40 border border-sky-500/30 text-xs animate-in slide-in-from-top-2">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={toggleSelectAll}
-              className="font-medium text-sky-300 hover:underline"
-            >
-              {selectedIds.size === filteredDocuments.length ? 'Deselect All' : 'Select All'}
-            </button>
-            <span className="text-slate-400 font-mono">
-              {selectedIds.size} selected
-            </span>
+        <div className="p-3 rounded-2xl bg-sky-950/40 border border-sky-500/30 text-xs animate-in slide-in-from-top-2 space-y-2.5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <button
+                onClick={toggleSelectAll}
+                className="font-medium text-sky-300 hover:underline"
+              >
+                {selectedIds.size === filteredDocuments.length ? 'Deselect All' : 'Select All'}
+              </button>
+              <span className="text-slate-400 font-mono">
+                {selectedIds.size} selected
+              </span>
+              {isBatchWorking && (
+                <span className="flex items-center gap-1.5 text-sky-400 animate-pulse text-[11px]">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>{batchWorkMessage || 'Processing...'}</span>
+                </span>
+              )}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Move to Collection */}
+              <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-700/80 rounded-xl px-2.5 py-1 text-xs">
+                <FolderInput className="w-3.5 h-3.5 text-sky-400" />
+                <select
+                  disabled={selectedIds.size === 0 || isBatchWorking}
+                  onChange={e => {
+                    if (e.target.value) {
+                      handleBatchMoveCategory(e.target.value);
+                      e.target.value = '';
+                    }
+                  }}
+                  defaultValue=""
+                  className="bg-transparent text-slate-200 focus:outline-none cursor-pointer disabled:opacity-40"
+                >
+                  <option value="" disabled className="bg-slate-900">
+                    Move to...
+                  </option>
+                  {collections.map(col => (
+                    <option key={col.id} value={col.id} className="bg-slate-900">
+                      {col.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Add Tag */}
+              <button
+                onClick={() => setShowTagPrompt(prev => !prev)}
+                disabled={selectedIds.size === 0 || isBatchWorking}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700/80 text-slate-200 disabled:opacity-40 transition"
+                title="Add tag to selected"
+              >
+                <Tag className="w-3.5 h-3.5 text-amber-400" />
+                <span>Tag</span>
+              </button>
+
+              {/* Download as ZIP */}
+              <button
+                onClick={handleBatchDownloadZip}
+                disabled={selectedIds.size === 0 || isBatchWorking}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700/80 text-slate-200 disabled:opacity-40 transition"
+                title="Download selected as ZIP archive"
+              >
+                <Archive className="w-3.5 h-3.5 text-sky-400" />
+                <span>Download ZIP</span>
+              </button>
+
+              {/* Delete Selected */}
+              <button
+                onClick={handleBulkDeleteConfirm}
+                disabled={selectedIds.size === 0 || isBatchWorking}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-semibold text-xs disabled:opacity-50 transition"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Delete ({selectedIds.size})</span>
+              </button>
+            </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <button
-              onClick={handleBulkDeleteConfirm}
-              disabled={selectedIds.size === 0}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-semibold text-xs disabled:opacity-50 transition"
+          {/* Quick Tag Entry Sub-row */}
+          {showTagPrompt && selectedIds.size > 0 && (
+            <form
+              onSubmit={handleBatchAddTagSubmit}
+              className="flex items-center gap-2 pt-2 border-t border-slate-800/80 animate-in fade-in"
             >
-              <Trash2 className="w-3.5 h-3.5" />
-              <span>Delete Selected</span>
-            </button>
-          </div>
+              <Tag className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+              <input
+                type="text"
+                placeholder="Enter tag to apply to selected documents (e.g. syllabus, sem4)..."
+                value={batchTagInput}
+                onChange={e => setBatchTagInput(e.target.value)}
+                autoFocus
+                className="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-1 text-xs text-white focus:outline-none focus:border-sky-500"
+              />
+              <button
+                type="submit"
+                disabled={!batchTagInput.trim() || isBatchWorking}
+                className="px-3 py-1 rounded-xl bg-sky-500 hover:bg-sky-400 text-slate-950 font-semibold text-xs disabled:opacity-40"
+              >
+                Apply Tag
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowTagPrompt(false)}
+                className="p-1 text-slate-400 hover:text-white"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </form>
+          )}
         </div>
       )}
 
