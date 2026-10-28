@@ -117,19 +117,19 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         </div>
 
         <div className="p-6 space-y-6 max-h-[80vh] overflow-y-auto">
-          {/* Google Auth & Firebase Database Status */}
+          {/* Google Auth & Google Drive Vault Status */}
           <div className="space-y-2">
             <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center justify-between">
-              <span>Google Account & Firebase Database</span>
+              <span>Google Account & Google Drive Vault</span>
               <span className="text-[10px] font-mono text-emerald-400 flex items-center gap-1">
                 <Cloud className="w-3 h-3" />
-                Cloud Firestore Connected
+                Google Drive Vault
               </span>
             </h3>
 
             <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800">
               {user ? (
-                <div className="flex items-center justify-between gap-3">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                   <div className="flex items-center gap-3">
                     {user.photoURL ? (
                       <img
@@ -143,27 +143,44 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       </div>
                     )}
                     <div>
-                      <p className="text-xs font-semibold text-white">{user.displayName || 'Google User'}</p>
+                      <div className="flex items-center gap-2">
+                        <p className="text-xs font-semibold text-white">{user.displayName || 'Google User'}</p>
+                        <span className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                          DRIVE SYNCED
+                        </span>
+                      </div>
                       <p className="text-[11px] text-slate-400 truncate max-w-[180px] sm:max-w-[240px]">
                         {user.email}
                       </p>
                     </div>
                   </div>
 
-                  <button
-                    onClick={onLogout}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-medium transition"
-                  >
-                    <LogOut className="w-3.5 h-3.5 text-rose-400" />
-                    <span>Sign Out</span>
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => {
+                        onClose();
+                        onOpenBackup('export');
+                      }}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-sky-500/15 hover:bg-sky-500/25 text-sky-300 border border-sky-500/30 text-xs font-medium transition"
+                    >
+                      <Cloud className="w-3.5 h-3.5 text-sky-400" />
+                      <span>Drive Vault</span>
+                    </button>
+                    <button
+                      onClick={onLogout}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-medium transition"
+                    >
+                      <LogOut className="w-3.5 h-3.5 text-rose-400" />
+                      <span>Sign Out</span>
+                    </button>
+                  </div>
                 </div>
               ) : (
                 <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                   <div>
-                    <p className="text-xs font-semibold text-white">Sign In with Google</p>
+                    <p className="text-xs font-semibold text-white">Connect Google Drive</p>
                     <p className="text-[11px] text-slate-400">
-                      Sync document metadata & custom layout across your devices via Cloud Firestore
+                      Sync PDF files, collections & custom layout directly into your personal Google Drive
                     </p>
                   </div>
                   <button

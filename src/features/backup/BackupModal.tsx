@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import JSZip from 'jszip';
 import {
   Download,
@@ -13,24 +13,50 @@ import {
   HardDrive,
   Copy,
   FolderInput,
+  Cloud,
+  ExternalLink,
+  RefreshCw,
+  LogIn,
 } from 'lucide-react';
 import { backupService, BackupValidationResult } from '../../lib/backup-service';
+import { googleDriveService } from '../../lib/google-drive-service';
 import { formatBytes } from '../../lib/storage-service';
+import { AppSettings, GoogleDriveVaultInfo, UserProfile } from '../../types';
 
 interface BackupModalProps {
   isOpen: boolean;
   onClose: () => void;
   onRestoreComplete: () => void;
-  initialTab?: 'export' | 'import';
+  initialTab?: 'drive' | 'export' | 'import';
+  user: UserProfile | null;
+  onLoginGoogle: () => void;
+  settings: AppSettings;
 }
 
 export const BackupModal: React.FC<BackupModalProps> = ({
   isOpen,
   onClose,
   onRestoreComplete,
-  initialTab = 'export',
+  initialTab = 'drive',
+  user,
+  onLoginGoogle,
+  settings,
 }) => {
-  const [activeTab, setActiveTab] = useState<'export' | 'import'>(initialTab);
+  const [activeTab, setActiveTab] = useState<'drive' | 'export' | 'import'>(user ? initialTab : 'drive');
+
+  // Google Drive State
+  const [vaultInfo, setVaultInfo] = useState<GoogleDriveVaultInfo | null>(null);
+  const [isLoadingDrive, setIsLoadingDrive] = useState(false);
+  const [isDriveSyncing, setIsDriveSyncing] = useState(false);
+  const [driveProgress, setDriveProgress] = useState<{ percent: number; status: string }>({
+    percent: 0,
+    status: '',
+  });
+  const [driveActionResult, setDriveActionResult] = useState<{
+    type: 'backup' | 'restore';
+    message: string;
+    details?: string;
+  } | null>(null);
 
   // Export State
   const [isExporting, setIsExporting] = useState(false);
@@ -61,7 +87,76 @@ export const BackupModal: React.FC<BackupModalProps> = ({
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  if (!isOpen) return null;
+  useEffect(() => {
+    if (isOpen && user) {
+      loadDriveVaultInfo();
+    }
+  }, [isOpen, user]);
+
+  const loadDriveVaultInfo = async () => {
+    setIsLoadingDrive(true);
+    try {
+      const info = await googleDriveService.getVaultInfo();
+      setVaultInfo(info);
+    } catch (err) {
+      console.warn('Could not load Drive vault info:', err);
+    } finally {
+      setIsLoadingDrive(false);
+    }
+  };
+
+  const handleDriveBackup = async () => {
+    setIsDriveSyncing(true);
+    setDriveActionResult(null);
+    setDriveProgress({ percent: 5, status: 'Connecting to Google Drive...' });
+
+    try {
+      const result = await googleDriveService.syncAllToDrive(settings, (percent, status) => {
+        setDriveProgress({ percent, status });
+      });
+
+      setDriveActionResult({
+        type: 'backup',
+        message: `Successfully backed up ${result.uploadedCount} document(s) to Google Drive!`,
+        details: 'All PDF binaries, collections, and custom layouts are stored in your "DocPocket Vault" folder.',
+      });
+      await loadDriveVaultInfo();
+    } catch (err) {
+      alert('Google Drive Backup Failed: ' + (err instanceof Error ? err.message : 'Unknown error'));
+    } finally {
+      setIsDriveSyncing(false);
+    }
+  };
+
+  const handleDriveRestore = async () => {
+    const confirmed = window.confirm(
+      'Restore entire document vault from your Google Drive? Any missing documents and collections will be loaded into your device.'
+    );
+    if (!confirmed) return;
+
+    setIsDriveSyncing(true);
+    setDriveActionResult(null);
+    setDriveProgress({ percent: 5, status: 'Fetching vault manifest from Google Drive...' });
+
+    try {
+      const result = await googleDriveService.restoreFromDrive((percent, status) => {
+        setDriveProgress({ percent, status });
+      });
+
+      setDriveActionResult({
+        type: 'restore',
+        message: `Restoration complete! Synced ${result.restoredDocs} document(s) and ${result.restoredCollections} collection(s).`,
+        details: 'Your vault is now fully synchronized and ready for offline use.',
+      });
+
+      await loadDriveVaultInfo();
+      onRestoreComplete();
+    } catch (err) {
+      alert('Google Drive Restore Failed: ' + (err instanceof Error ? err.message : 'Unknown error'));
+    } finally {
+      setIsDriveSyncing(false);
+    }
+  };
 
   const handleStartExport = async () => {
     setIsExporting(true);
@@ -101,7 +196,6 @@ export const BackupModal: React.FC<BackupModalProps> = ({
       const result = await backupService.validateBackupFile(file);
       setValidationData(result);
 
-      // Default all conflicts to 'skip' or 'keep_both'
       const resolutions = new Map<string, 'skip' | 'keep_both' | 'overwrite'>();
       result.validation.conflicts.forEach(c => {
         resolutions.set(c.incomingDoc.id, 'keep_both');
@@ -155,6 +249,8 @@ export const BackupModal: React.FC<BackupModalProps> = ({
     }
   };
 
+  if (!isOpen) return null;
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 overflow-y-auto animate-in fade-in duration-200">
       <div className="w-full max-w-xl rounded-2xl bg-[#0d1424] border border-slate-800 shadow-2xl overflow-hidden my-auto">
@@ -162,16 +258,16 @@ export const BackupModal: React.FC<BackupModalProps> = ({
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800/80 bg-slate-900/40">
           <div className="flex items-center gap-2.5">
             <span className="w-8 h-8 rounded-xl bg-sky-500/10 border border-sky-500/20 text-sky-400 flex items-center justify-center">
-              <Archive className="w-4 h-4" />
+              <Cloud className="w-4 h-4" />
             </span>
             <div>
-              <h2 className="text-base font-semibold text-white">Backup & Restoration</h2>
-              <p className="text-xs text-slate-400">Portable on-device ZIP archives</p>
+              <h2 className="text-base font-semibold text-white">Cloud Sync & Backup</h2>
+              <p className="text-xs text-slate-400">Google Drive cross-platform sync & offline ZIP backups</p>
             </div>
           </div>
           <button
             onClick={onClose}
-            disabled={isExporting || isRestoring}
+            disabled={isExporting || isRestoring || isDriveSyncing}
             className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition"
           >
             <X className="w-5 h-5" />
@@ -181,6 +277,17 @@ export const BackupModal: React.FC<BackupModalProps> = ({
         {/* Tab switcher */}
         <div className="flex border-b border-slate-800 px-6 pt-2 bg-slate-900/20">
           <button
+            onClick={() => setActiveTab('drive')}
+            className={`flex items-center gap-2 px-4 py-2.5 text-xs font-semibold border-b-2 transition ${
+              activeTab === 'drive'
+                ? 'border-sky-400 text-sky-400'
+                : 'border-transparent text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Cloud className="w-3.5 h-3.5 text-sky-400" />
+            <span>Google Drive Sync</span>
+          </button>
+          <button
             onClick={() => setActiveTab('export')}
             className={`flex items-center gap-2 px-4 py-2.5 text-xs font-semibold border-b-2 transition ${
               activeTab === 'export'
@@ -189,7 +296,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
             }`}
           >
             <Download className="w-3.5 h-3.5" />
-            <span>Export Backup ZIP</span>
+            <span>Export ZIP</span>
           </button>
           <button
             onClick={() => setActiveTab('import')}
@@ -200,13 +307,175 @@ export const BackupModal: React.FC<BackupModalProps> = ({
             }`}
           >
             <Upload className="w-3.5 h-3.5" />
-            <span>Restore from ZIP</span>
+            <span>Restore ZIP</span>
           </button>
         </div>
 
         {/* Tab Body */}
         <div className="p-6 space-y-5">
-          {activeTab === 'export' ? (
+          {activeTab === 'drive' && (
+            <div className="space-y-4">
+              {!user ? (
+                /* Unauthenticated state */
+                <div className="p-6 rounded-2xl bg-slate-900/50 border border-slate-800 text-center space-y-4">
+                  <div className="w-12 h-12 rounded-2xl bg-sky-500/10 border border-sky-500/20 text-sky-400 mx-auto flex items-center justify-center">
+                    <Cloud className="w-6 h-6" />
+                  </div>
+                  <div className="space-y-1">
+                    <h3 className="text-sm font-semibold text-white">Connect Google Drive</h3>
+                    <p className="text-xs text-slate-400 max-w-sm mx-auto leading-relaxed">
+                      Sync your PDF documents, timetable, and custom collections seamlessly to your personal Google Drive for cross-platform access on any phone, tablet, or PC.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      onClose();
+                      onLoginGoogle();
+                    }}
+                    className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-white hover:bg-slate-100 text-slate-950 font-semibold text-xs transition shadow-lg shadow-white/10 active:scale-[0.98]"
+                  >
+                    <svg className="w-4 h-4" viewBox="0 0 24 24">
+                      <path
+                        fill="#4285F4"
+                        d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                      />
+                      <path
+                        fill="#34A853"
+                        d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                      />
+                      <path
+                        fill="#FBBC05"
+                        d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
+                      />
+                      <path
+                        fill="#EA4335"
+                        d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
+                      />
+                    </svg>
+                    <span>Sign in with Google</span>
+                  </button>
+                </div>
+              ) : (
+                /* Authenticated Google Drive sync card */
+                <div className="space-y-4">
+                  {/* Account & Folder Bar */}
+                  <div className="p-4 rounded-xl bg-slate-900/70 border border-slate-800 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      {user.photoURL ? (
+                        <img
+                          src={user.photoURL}
+                          alt={user.displayName || 'User'}
+                          className="w-10 h-10 rounded-full border border-sky-500/30"
+                        />
+                      ) : (
+                        <div className="w-10 h-10 rounded-full bg-sky-500/20 text-sky-400 flex items-center justify-center font-bold">
+                          {user.displayName?.[0] || 'U'}
+                        </div>
+                      )}
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <p className="text-xs font-semibold text-white">{user.displayName || 'Google Account'}</p>
+                          <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                            CONNECTED
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-400 truncate max-w-[200px] sm:max-w-xs">{user.email}</p>
+                      </div>
+                    </div>
+
+                    {vaultInfo?.folderUrl && (
+                      <a
+                        href={vaultInfo.folderUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-sky-500/10 hover:bg-sky-500/20 text-sky-400 border border-sky-500/20 text-[11px] font-medium transition shrink-0"
+                      >
+                        <span>Open Drive Folder</span>
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    )}
+                  </div>
+
+                  {/* Vault Status Box */}
+                  <div className="p-4 rounded-xl bg-slate-900/40 border border-slate-800/80 space-y-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-slate-400">Target Drive Folder:</span>
+                      <span className="font-mono text-sky-400 font-medium">DocPocket Vault</span>
+                    </div>
+                    {vaultInfo && (
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-slate-400">Items in Google Drive:</span>
+                        <span className="font-mono text-slate-200">{vaultInfo.fileCount} files</span>
+                      </div>
+                    )}
+                    {vaultInfo?.lastSyncTime && (
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-slate-400">Last Synced to Drive:</span>
+                        <span className="font-mono text-slate-400">
+                          {new Date(vaultInfo.lastSyncTime).toLocaleString()}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Action Progress */}
+                  {isDriveSyncing && (
+                    <div className="p-4 rounded-xl bg-slate-900/90 border border-sky-500/30 space-y-2.5">
+                      <div className="flex items-center justify-between text-xs font-medium">
+                        <span className="flex items-center gap-2 text-sky-400">
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          {driveProgress.status}
+                        </span>
+                        <span className="font-mono text-slate-400">{driveProgress.percent}%</span>
+                      </div>
+                      <div className="w-full h-1.5 rounded-full bg-slate-800 overflow-hidden">
+                        <div
+                          className="h-full bg-sky-500 transition-all duration-300"
+                          style={{ width: `${driveProgress.percent}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Result notification */}
+                  {driveActionResult && (
+                    <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 flex items-start gap-3">
+                      <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+                      <div className="text-xs space-y-1">
+                        <p className="font-semibold text-white">{driveActionResult.message}</p>
+                        {driveActionResult.details && (
+                          <p className="text-slate-400 text-[11px]">{driveActionResult.details}</p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Action buttons */}
+                  {!isDriveSyncing && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+                      <button
+                        onClick={handleDriveBackup}
+                        className="flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-400 hover:to-blue-500 text-white font-semibold text-xs shadow-lg shadow-sky-500/20 transition active:scale-[0.98]"
+                      >
+                        <Upload className="w-4 h-4" />
+                        <span>Backup to Google Drive</span>
+                      </button>
+
+                      <button
+                        onClick={handleDriveRestore}
+                        className="flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white border border-slate-700 font-semibold text-xs transition active:scale-[0.98]"
+                      >
+                        <Download className="w-4 h-4" />
+                        <span>Restore from Google Drive</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeTab === 'export' && (
             /* Export Flow */
             <div className="space-y-4">
               <div className="p-4 rounded-xl bg-slate-900/70 border border-slate-800 flex items-start gap-3">
@@ -247,7 +516,9 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                 </div>
               )}
             </div>
-          ) : (
+          )}
+
+          {activeTab === 'import' && (
             /* Import & Restore Flow */
             <div className="space-y-4">
               <input
@@ -314,7 +585,6 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                     </p>
                   </div>
 
-                  {/* Conflict handling options if duplicates detected */}
                   {validationData.validation.conflicts.length > 0 ? (
                     <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/20 space-y-3">
                       <div className="flex items-center justify-between">

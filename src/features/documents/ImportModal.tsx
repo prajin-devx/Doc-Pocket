@@ -15,6 +15,9 @@ import { CollectionItem } from '../../types';
 import { documentService } from '../../lib/document-service';
 import { collectionService } from '../../lib/collection-service';
 import { formatBytes } from '../../lib/storage-service';
+import { db } from '../../lib/database';
+import { getAccessToken } from '../../lib/firebase';
+import { googleDriveService } from '../../lib/google-drive-service';
 
 interface ImportModalProps {
   isOpen: boolean;
@@ -142,6 +145,20 @@ export const ImportModal: React.FC<ImportModalProps> = ({
         errorCount: result.errors.length,
         errors: result.errors,
       });
+
+      // Background upload to Google Drive if user is connected
+      getAccessToken().then(async token => {
+        if (token && result.imported.length > 0) {
+          for (const doc of result.imported) {
+            const bin = await db.binaries.get(doc.id);
+            if (bin) {
+              googleDriveService.uploadDocument(doc, bin.data).catch(err => {
+                console.warn('Background Drive backup warning:', err);
+              });
+            }
+          }
+        }
+      }).catch(() => {});
 
       onSuccess();
     } catch (err) {

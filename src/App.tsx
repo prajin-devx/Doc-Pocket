@@ -25,14 +25,13 @@ import {
   Minimize2,
   Sparkles,
 } from 'lucide-react';
-import { onAuthStateChanged } from 'firebase/auth';
 import { AppSettings, CollectionItem, DashboardSectionId, DocumentItem, UserProfile } from './types';
 import { db, initializeDatabase } from './lib/database';
 import { documentService } from './lib/document-service';
 import { collectionService } from './lib/collection-service';
 import { storageService, formatBytes } from './lib/storage-service';
-import { auth, loginWithGoogle, logoutUser, testConnection } from './lib/firebase';
-import { firestoreService } from './lib/firestore-service';
+import { auth, loginWithGoogle, logoutUser, initAuth, getAccessToken } from './lib/firebase';
+import { googleDriveService } from './lib/google-drive-service';
 import { DashboardView } from './features/dashboard/DashboardView';
 import { DocumentLibraryView } from './features/documents/DocumentLibraryView';
 import { CollectionsView } from './features/collections/CollectionsView';
@@ -111,47 +110,52 @@ export default function App() {
   const [isImportOpen, setIsImportOpen] = useState(false);
   const [importCategory, setImportCategory] = useState<string>('inbox');
   const [isBackupOpen, setIsBackupOpen] = useState(false);
-  const [backupTab, setBackupTab] = useState<'export' | 'import'>('export');
+  const [backupTab, setBackupTab] = useState<'drive' | 'export' | 'import'>('drive');
   const [isManageCollectionsOpen, setIsManageCollectionsOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isLayoutModalOpen, setIsLayoutModalOpen] = useState(false);
   const [deleteDoc, setDeleteDoc] = useState<DocumentItem | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  // Initialize Firebase connection check
+  // Listen to Google Auth state
   useEffect(() => {
-    testConnection();
-  }, []);
+    const unsubscribe = initAuth(
+      async (fbUser, token) => {
+        if (fbUser) {
+          const profile: UserProfile = {
+            uid: fbUser.uid,
+            email: fbUser.email,
+            displayName: fbUser.displayName,
+            photoURL: fbUser.photoURL,
+          };
+          setUser(profile);
 
-  // Listen to Firebase Auth state
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async fbUser => {
-      if (fbUser) {
-        const profile: UserProfile = {
-          uid: fbUser.uid,
-          email: fbUser.email,
-          displayName: fbUser.displayName,
-          photoURL: fbUser.photoURL,
-        };
-        setUser(profile);
-
-        // Try to load user's cloud dashboard layout preferences
-        try {
-          const cloudPrefs = await firestoreService.loadDashboardPreferences(fbUser.uid);
-          if (cloudPrefs && cloudPrefs.sectionOrder.length > 0) {
-            setSettings(prev => ({
-              ...prev,
-              dashboardSectionOrder: cloudPrefs.sectionOrder,
-            }));
+          // Try to load user's Google Drive preferences if available
+          if (token) {
+            try {
+              const manifest = await googleDriveService.fetchManifest();
+              if (manifest?.settings?.dashboardSectionOrder?.length) {
+                setSettings(prev => ({
+                  ...prev,
+                  dashboardSectionOrder: manifest.settings!.dashboardSectionOrder,
+                  hiddenDashboardSections:
+                    manifest.settings!.hiddenDashboardSections || prev.hiddenDashboardSections,
+                }));
+              }
+            } catch (err) {
+              console.warn('Could not load Google Drive settings:', err);
+            }
           }
-        } catch (err) {
-          console.warn('Could not load cloud dashboard preferences:', err);
+        } else {
+          setUser(null);
         }
-      } else {
+        setIsAuthLoading(false);
+      },
+      () => {
         setUser(null);
+        setIsAuthLoading(false);
       }
-      setIsAuthLoading(false);
-    });
+    );
 
     return () => unsubscribe();
   }, []);
@@ -192,13 +196,7 @@ export default function App() {
     setAllTags(tags);
     setTotalStorageBytes(stats.totalPdfBytes);
 
-    // If user is authenticated, sync new document metadata to Firestore
-    if (auth.currentUser) {
-      const currentUserId = auth.currentUser.uid;
-      docs.forEach(d => {
-        firestoreService.syncDocumentMetadata(currentUserId, d).catch(console.warn);
-      });
-    }
+    // Vault refreshed locally
   }, []);
 
   useEffect(() => {
@@ -240,7 +238,7 @@ export default function App() {
     if (!deleteDoc) return;
     try {
       if (user) {
-        await firestoreService.deleteDocumentMetadata(user.uid, deleteDoc.id).catch(console.warn);
+        await googleDriveService.deleteDocumentByDocId(deleteDoc.id).catch(console.warn);
       }
       await documentService.deleteDocument(deleteDoc.id);
       setDeleteDoc(null);
@@ -253,7 +251,7 @@ export default function App() {
   const handleBulkDelete = async (ids: string[]) => {
     try {
       if (user) {
-        ids.forEach(id => firestoreService.deleteDocumentMetadata(user.uid, id).catch(console.warn));
+        ids.forEach(id => googleDriveService.deleteDocumentByDocId(id).catch(console.warn));
       }
       await documentService.deleteMultipleDocuments(ids);
       refreshVaultData();
@@ -278,7 +276,7 @@ export default function App() {
 
   const handleLoginGoogle = async () => {
     try {
-      const loggedUser = await loginWithGoogle();
+      const { user: loggedUser } = await loginWithGoogle();
       const profile: UserProfile = {
         uid: loggedUser.uid,
         email: loggedUser.email,
@@ -305,17 +303,25 @@ export default function App() {
     newOrder: DashboardSectionId[],
     newHidden: DashboardSectionId[]
   ) => {
-    setSettings(prev => ({
-      ...prev,
+    const updatedSettings: AppSettings = {
+      ...settings,
       dashboardSectionOrder: newOrder,
       hiddenDashboardSections: newHidden,
-    }));
+    };
+    setSettings(updatedSettings);
 
     if (user) {
       try {
-        await firestoreService.saveDashboardPreferences(user.uid, newOrder);
+        const token = await getAccessToken();
+        if (token) {
+          const manifest = await googleDriveService.fetchManifest();
+          if (manifest) {
+            manifest.settings = updatedSettings;
+            await googleDriveService.uploadManifest(manifest);
+          }
+        }
       } catch (err) {
-        console.warn('Failed to sync dashboard preferences to Firestore:', err);
+        console.warn('Failed to sync dashboard preferences to Google Drive:', err);
       }
     }
   };
@@ -540,7 +546,7 @@ export default function App() {
                   </p>
                   <p className="text-[10px] text-emerald-400 flex items-center gap-1">
                     <Cloud className="w-2.5 h-2.5" />
-                    <span>Firestore Synced</span>
+                    <span>Google Drive Vault</span>
                   </p>
                 </div>
               </div>
@@ -588,20 +594,20 @@ export default function App() {
               </span>
               <span className="font-mono text-sky-300 font-semibold">{formatBytes(totalStorageBytes)}</span>
             </div>
-            <p className="text-[10px] text-slate-500">100% on-device binaries • Cloud metadata sync</p>
+            <p className="text-[10px] text-slate-500">100% on-device binaries • Google Drive backup</p>
           </div>
 
           <div className="grid grid-cols-2 gap-2">
             <button
               onClick={() => {
-                setBackupTab('export');
+                setBackupTab('drive');
                 setIsBackupOpen(true);
               }}
               className="flex items-center justify-center gap-1.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-xs text-slate-300 hover:text-white transition"
-              title="Backup & Restore ZIP"
+              title="Cloud Sync & Backup"
             >
-              <Archive className="w-3.5 h-3.5 text-sky-400" />
-              <span>Backup</span>
+              <Cloud className="w-3.5 h-3.5 text-sky-400" />
+              <span>Drive Vault</span>
             </button>
 
             <button
@@ -1059,6 +1065,9 @@ export default function App() {
           refreshVaultData();
         }}
         initialTab={backupTab}
+        user={user}
+        onLoginGoogle={handleLoginGoogle}
+        settings={settings}
       />
 
       {/* Manage Collections Modal */}

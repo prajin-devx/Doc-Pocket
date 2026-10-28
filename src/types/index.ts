@@ -71,6 +71,7 @@ export interface BackupManifest {
   totalDocuments: number;
   collections: CollectionItem[];
   documents: DocumentItem[];
+  settings?: AppSettings;
 }
 
 export interface BackupConflict {
@@ -89,3 +90,14 @@ export interface FilterOptions {
   sortField: SortField;
   sortOrder: SortOrder;
 }
+
+export type GoogleDriveSyncStatus = 'idle' | 'syncing' | 'synced' | 'error' | 'not_connected';
+
+export interface GoogleDriveVaultInfo {
+  folderId: string;
+  folderUrl: string;
+  manifestFileId?: string;
+  lastSyncTime?: number;
+  fileCount: number;
+}
+

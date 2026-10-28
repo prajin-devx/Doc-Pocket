@@ -110,9 +110,26 @@ DocPocket is responsive and provides a multi-column desktop layout with a sideba
 
 ---
 
-## 5. Verification & Troubleshooting Checklist
+## 5. Google Drive Cross-Platform Sync Architecture
+
+DocPocket now utilizes **Google Drive v3 REST API** for cloud backup and multi-device synchronization, eliminating reliance on third-party databases:
+
+1. **Dedicated User Vault (`DocPocket Vault`):**
+   - Automatically maintains a dedicated folder in the user's personal Google Drive called `DocPocket Vault`.
+   - Stores full PDF binaries and a structured `vault-manifest.json` containing collections, categories, tags, timetable preferences, and layout order.
+2. **True Cross-Platform Sync:**
+   - **On Android:** Log in with Google to restore or sync your entire vault into on-device IndexedDB for instant offline reading.
+   - **On Desktop:** Import or compress PDFs on your computer, click "Backup to Google Drive", and immediately access them on your phone.
+3. **Data Privacy & Ownership:**
+   - All files are stored directly inside the user's personal Google Drive account. No third-party servers hold document copies.
+   - Users can open, download, or share files directly from `drive.google.com` inside their `DocPocket Vault` folder.
+
+---
+
+## 6. Verification & Troubleshooting Checklist
 
 - [x] **Local Build Test:** Run `npm run build` — creates static assets in `/dist` without errors.
 - [x] **Type Safety Check:** Run `npm run lint` (`tsc --noEmit`) — zero compiler warnings or errors.
 - [x] **Service Worker Registration:** `dist/sw.js` and `dist/manifest.webmanifest` are served with `Cache-Control: public, max-age=0, must-revalidate` to ensure immediate updates.
+- [x] **Google Drive Scopes:** Configured with least-privilege `https://www.googleapis.com/auth/drive.file`.
 - [x] **IndexedDB Quota:** Uses browser storage quota (typically up to several gigabytes on modern phones and desktops).
