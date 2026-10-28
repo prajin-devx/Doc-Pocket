@@ -1,0 +1,181 @@
+{
+  "entities": {
+    "UserDocumentMetadata": {
+      "title": "UserDocumentMetadata",
+      "description": "Metadata for a personal PDF document stored in DocPocket vault",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique document identifier",
+          "maxLength": 128
+        },
+        "userId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the document owner",
+          "maxLength": 128
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Human-readable title of the PDF document",
+          "maxLength": 256
+        },
+        "fileName": {
+          "type": "string",
+          "description": "Original file name",
+          "maxLength": 256
+        },
+        "fileSize": {
+          "type": "number",
+          "description": "File size in bytes"
+        },
+        "pageCount": {
+          "type": "number",
+          "description": "Total number of pages"
+        },
+        "category": {
+          "type": "string",
+          "description": "Collection or category identifier (e.g. timetable, college, subjects)",
+          "maxLength": 64
+        },
+        "description": {
+          "type": "string",
+          "description": "Notes or summary of the PDF",
+          "maxLength": 2048
+        },
+        "isFavorite": {
+          "type": "boolean",
+          "description": "Whether document is starred/favorite"
+        },
+        "isPinned": {
+          "type": "boolean",
+          "description": "Whether document is pinned to Quick Access"
+        },
+        "fileHash": {
+          "type": "string",
+          "description": "SHA-256 hash of the binary file",
+          "maxLength": 128
+        },
+        "importedAt": {
+          "type": "number",
+          "description": "Unix timestamp in ms when imported"
+        },
+        "lastOpenedAt": {
+          "type": "number",
+          "description": "Unix timestamp in ms when last opened"
+        }
+      },
+      "required": [
+        "id",
+        "userId",
+        "displayName",
+        "fileName",
+        "fileSize",
+        "category",
+        "isFavorite",
+        "isPinned",
+        "importedAt"
+      ]
+    },
+    "UserCollection": {
+      "title": "UserCollection",
+      "description": "A collection/category folder for organizing documents",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique collection identifier",
+          "maxLength": 64
+        },
+        "userId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the owner",
+          "maxLength": 128
+        },
+        "name": {
+          "type": "string",
+          "description": "Name of the collection",
+          "maxLength": 100
+        },
+        "color": {
+          "type": "string",
+          "description": "Hex color code",
+          "maxLength": 16
+        },
+        "icon": {
+          "type": "string",
+          "description": "Lucide icon name identifier",
+          "maxLength": 32
+        },
+        "description": {
+          "type": "string",
+          "description": "Collection purpose or notes",
+          "maxLength": 512
+        },
+        "isSystem": {
+          "type": "boolean",
+          "description": "Whether it is a default or custom category"
+        },
+        "createdAt": {
+          "type": "number",
+          "description": "Timestamp of creation"
+        }
+      },
+      "required": [
+        "id",
+        "userId",
+        "name",
+        "color",
+        "icon",
+        "isSystem",
+        "createdAt"
+      ]
+    },
+    "UserDashboardConfig": {
+      "title": "UserDashboardConfig",
+      "description": "Custom dashboard layout preferences deciding what section comes first",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the user",
+          "maxLength": 128
+        },
+        "sectionOrder": {
+          "type": "string",
+          "description": "Comma-separated list of section IDs in desired visual order",
+          "maxLength": 256
+        },
+        "firstSection": {
+          "type": "string",
+          "description": "The priority section placed at the top of the dashboard",
+          "maxLength": 64
+        },
+        "updatedAt": {
+          "type": "number",
+          "description": "Timestamp of preference update"
+        }
+      },
+      "required": [
+        "userId",
+        "sectionOrder",
+        "firstSection",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}/documents/{documentId}": {
+      "schema": "UserDocumentMetadata",
+      "description": "User's personal PDF metadata documents"
+    },
+    "/users/{userId}/collections/{collectionId}": {
+      "schema": "UserCollection",
+      "description": "User's collection categories"
+    },
+    "/users/{userId}/preferences/{prefId}": {
+      "schema": "UserDashboardConfig",
+      "description": "User's dashboard layout preferences and ordering"
+    }
+  }
+}

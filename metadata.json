@@ -1,0 +1,6 @@
+{
+  "name": "DocPocket",
+  "description": "DocPocket is a personal PDF vault and offline document management system featuring on-device IndexedDB storage, high-fidelity PDF reading, collections, quick tagging, and seamless backup/restoration.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
