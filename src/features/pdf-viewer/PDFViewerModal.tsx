@@ -29,8 +29,22 @@ import {
   HelpCircle,
   ChevronDown,
   ChevronUp,
+  BookOpen,
+  Volume2,
+  VolumeX,
+  Pause,
+  Play,
+  Square,
+  Copy,
+  Sun,
+  Moon,
+  Type,
+  BookmarkCheck,
+  Trash2,
+  Edit3,
+  Palette,
 } from 'lucide-react';
-import { CollectionItem, DocumentItem } from '../../types';
+import { CollectionItem, DocumentItem, PageBookmark, ReaderFilterTone } from '../../types';
 import { documentService } from '../../lib/document-service';
 import { collectionService } from '../../lib/collection-service';
 import { formatBytes } from '../../lib/storage-service';
@@ -87,6 +101,32 @@ export const PDFViewerModal: React.FC<PDFViewerModalProps> = ({
   const [editDescription, setEditDescription] = useState<string>('');
   const [isSavingMeta, setIsSavingMeta] = useState<boolean>(false);
   const [metaSavedNotice, setMetaSavedNotice] = useState<boolean>(false);
+
+  // Reading Mode: 'canvas' (print layout) or 'reflow' (mobile-responsive clean text)
+  const [viewMode, setViewMode] = useState<'canvas' | 'reflow'>('canvas');
+  const [canvasTone, setCanvasTone] = useState<ReaderFilterTone>('normal');
+  const [showToneMenu, setShowToneMenu] = useState<boolean>(false);
+
+  // Reflow Reader State
+  const [reflowFontSize, setReflowFontSize] = useState<number>(17);
+  const [reflowFontFamily, setReflowFontFamily] = useState<'sans' | 'serif' | 'mono'>('sans');
+  const [reflowTheme, setReflowTheme] = useState<'day' | 'sepia' | 'slate' | 'oled'>('slate');
+  const [reflowText, setReflowText] = useState<string>('');
+  const [isLoadingReflow, setIsLoadingReflow] = useState<boolean>(false);
+  const [copiedText, setCopiedText] = useState<boolean>(false);
+
+  // Read Aloud (Text-to-Speech)
+  const [isSpeaking, setIsSpeaking] = useState<boolean>(false);
+  const [isSpeechPaused, setIsSpeechPaused] = useState<boolean>(false);
+  const [speechRate, setSpeechRate] = useState<number>(1);
+
+  // Sidebar Tab: 'thumbnails' | 'bookmarks'
+  const [sidebarTab, setSidebarTab] = useState<'thumbnails' | 'bookmarks'>('thumbnails');
+  const [isAddingBookmark, setIsAddingBookmark] = useState<boolean>(false);
+  const [bookmarkTitle, setBookmarkTitle] = useState<string>('');
+  const [bookmarkNote, setBookmarkNote] = useState<string>('');
+  const [bookmarkColor, setBookmarkColor] = useState<string>('#38bdf8');
+  const [isSavingBookmark, setIsSavingBookmark] = useState<boolean>(false);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -299,6 +339,170 @@ export const PDFViewerModal: React.FC<PDFViewerModalProps> = ({
     touchStartY.current = null;
   };
 
+  // Extract text for Reflow Reader Mode when currentPage or viewMode changes
+  useEffect(() => {
+    if (viewMode === 'reflow' && pdfDoc) {
+      let isCurrent = true;
+      setIsLoadingReflow(true);
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+        setIsSpeaking(false);
+        setIsSpeechPaused(false);
+      }
+
+      pdfDoc.getPage(currentPage).then(async page => {
+        try {
+          const content = await page.getTextContent();
+          const extracted = content.items
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            .map((item: any) => item.str || '')
+            .join(' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+          if (isCurrent) {
+            setReflowText(extracted);
+            setIsLoadingReflow(false);
+          }
+        } catch {
+          if (isCurrent) {
+            setReflowText('');
+            setIsLoadingReflow(false);
+          }
+        }
+      }).catch(() => {
+        if (isCurrent) setIsLoadingReflow(false);
+      });
+
+      return () => {
+        isCurrent = false;
+        if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+          window.speechSynthesis.cancel();
+        }
+      };
+    }
+  }, [viewMode, currentPage, pdfDoc]);
+
+  // Read Aloud / TTS Handlers
+  const handlePlayTTS = () => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
+      alert('Speech synthesis is not supported on this device/browser.');
+      return;
+    }
+    if (!reflowText.trim()) return;
+
+    if (isSpeechPaused) {
+      window.speechSynthesis.resume();
+      setIsSpeechPaused(false);
+      setIsSpeaking(true);
+      return;
+    }
+
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(reflowText);
+    utterance.rate = speechRate;
+    utterance.onend = () => {
+      setIsSpeaking(false);
+      setIsSpeechPaused(false);
+    };
+    utterance.onerror = () => {
+      setIsSpeaking(false);
+      setIsSpeechPaused(false);
+    };
+
+    window.speechSynthesis.speak(utterance);
+    setIsSpeaking(true);
+    setIsSpeechPaused(false);
+  };
+
+  const handlePauseTTS = () => {
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.pause();
+      setIsSpeechPaused(true);
+    }
+  };
+
+  const handleStopTTS = () => {
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+      setIsSpeaking(false);
+      setIsSpeechPaused(false);
+    }
+  };
+
+  const handleCopyReflowText = async () => {
+    if (!reflowText.trim()) return;
+    try {
+      await navigator.clipboard.writeText(reflowText);
+      setCopiedText(true);
+      setTimeout(() => setCopiedText(false), 2000);
+    } catch {
+      // Fallback
+    }
+  };
+
+  const handleAddBookmark = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!docItem) return;
+    setIsSavingBookmark(true);
+    try {
+      const newBm = await documentService.addPageBookmark(docItem.id, {
+        pageNumber: currentPage,
+        title: bookmarkTitle.trim() || `Page ${currentPage}`,
+        note: bookmarkNote.trim() || undefined,
+        color: bookmarkColor,
+      });
+
+      setDocItem(prev => {
+        if (!prev) return null;
+        const list = prev.pageBookmarks || [];
+        return {
+          ...prev,
+          pageBookmarks: [...list, newBm].sort((a, b) => a.pageNumber - b.pageNumber),
+        };
+      });
+
+      setIsAddingBookmark(false);
+      setBookmarkTitle('');
+      setBookmarkNote('');
+      onDocumentUpdated?.();
+    } catch (err) {
+      alert('Could not save bookmark: ' + (err instanceof Error ? err.message : 'Error'));
+    } finally {
+      setIsSavingBookmark(false);
+    }
+  };
+
+  const handleDeleteBookmark = async (bmId: string) => {
+    if (!docItem) return;
+    try {
+      await documentService.deletePageBookmark(docItem.id, bmId);
+      setDocItem(prev => {
+        if (!prev) return null;
+        return {
+          ...prev,
+          pageBookmarks: (prev.pageBookmarks || []).filter(b => b.id !== bmId),
+        };
+      });
+      onDocumentUpdated?.();
+    } catch (err) {
+      console.error('Failed to remove bookmark:', err);
+    }
+  };
+
+  const getCanvasToneFilter = () => {
+    switch (canvasTone) {
+      case 'invert':
+        return 'invert(0.92) hue-rotate(180deg) contrast(1.1) brightness(0.95)';
+      case 'sepia':
+        return 'sepia(0.65) contrast(0.95) brightness(0.95)';
+      case 'contrast':
+        return 'grayscale(1) contrast(1.6)';
+      case 'normal':
+      default:
+        return 'none';
+    }
+  };
+
   // Render current page onto canvas
   const renderPage = useCallback(
     async (pageNumber: number) => {
@@ -379,7 +583,22 @@ export const PDFViewerModal: React.FC<PDFViewerModalProps> = ({
       } else if (e.key === '-') {
         setScale(s => Math.max(0.4, +(s - 0.15).toFixed(2)));
       } else if (e.key === 'r' || e.key === 'R') {
-        setRotation(r => (r + 90) % 360);
+        if (e.altKey) {
+          e.preventDefault();
+          setViewMode(vm => (vm === 'canvas' ? 'reflow' : 'canvas'));
+        } else {
+          setRotation(r => (r + 90) % 360);
+        }
+      } else if (e.key === 'b' || e.key === 'B') {
+        setShowThumbnails(true);
+        setSidebarTab('bookmarks');
+        setIsAddingBookmark(true);
+      } else if (e.key === 't' || e.key === 'T') {
+        const tones: ReaderFilterTone[] = ['normal', 'invert', 'sepia', 'contrast'];
+        setCanvasTone(prev => {
+          const idx = tones.indexOf(prev);
+          return tones[(idx + 1) % tones.length];
+        });
       } else if (e.key === 'f' || e.key === 'F') {
         handleFitWidth();
       } else if (e.key === '/' || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f')) {
@@ -623,11 +842,90 @@ export const PDFViewerModal: React.FC<PDFViewerModalProps> = ({
             >
               <RotateCw className="w-4 h-4" />
             </button>
+
+            <div className="h-4 w-px bg-slate-800 mx-1" />
+
+            {/* Reading Mode Switcher */}
+            <button
+              onClick={() => setViewMode(v => (v === 'canvas' ? 'reflow' : 'canvas'))}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg transition font-medium text-[11px] ${
+                viewMode === 'reflow'
+                  ? 'bg-sky-500 text-slate-950 font-bold shadow-sm'
+                  : 'text-slate-300 hover:text-white hover:bg-slate-800'
+              }`}
+              title="Toggle Mobile/Responsive Reading View (Alt+R)"
+            >
+              <BookOpen className="w-3.5 h-3.5" />
+              <span className="hidden lg:inline">{viewMode === 'reflow' ? 'Reading View' : 'Read View'}</span>
+            </button>
+
+            {/* Canvas Eye-Comfort Filter Menu */}
+            <div className="relative">
+              <button
+                onClick={() => setShowToneMenu(m => !m)}
+                className={`p-1.5 rounded-lg transition ${
+                  canvasTone !== 'normal'
+                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                }`}
+                title="Canvas Eye-Comfort Tone (T)"
+              >
+                <Palette className="w-3.5 h-3.5" />
+              </button>
+
+              {showToneMenu && (
+                <div className="absolute right-0 top-full mt-2 w-44 bg-[#0d1424] border border-slate-700 rounded-2xl shadow-2xl p-1.5 z-30 space-y-1 animate-in fade-in zoom-in-95">
+                  <div className="px-2 py-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                    Eye Comfort Tone
+                  </div>
+                  {[
+                    { id: 'normal', label: 'Original Day', icon: Sun, color: 'text-slate-300' },
+                    { id: 'invert', label: 'Night Invert', icon: Moon, color: 'text-sky-300' },
+                    { id: 'sepia', label: 'Warm Sepia', icon: BookOpen, color: 'text-amber-300' },
+                    { id: 'contrast', label: 'High Contrast', icon: Eye, color: 'text-emerald-300' },
+                  ].map(t => (
+                    <button
+                      key={t.id}
+                      onClick={() => {
+                        setCanvasTone(t.id as ReaderFilterTone);
+                        setShowToneMenu(false);
+                      }}
+                      className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-xl text-xs transition ${
+                        canvasTone === t.id
+                          ? 'bg-sky-500/20 text-sky-300 font-semibold'
+                          : 'text-slate-300 hover:bg-slate-800'
+                      }`}
+                    >
+                      <span className="flex items-center gap-2">
+                        <t.icon className={`w-3.5 h-3.5 ${t.color}`} />
+                        <span>{t.label}</span>
+                      </span>
+                      {canvasTone === t.id && <Check className="w-3.5 h-3.5 text-sky-400" />}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         )}
 
         {/* Right: Actions */}
         <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
+          {/* Mobile Reflow Reader Toggle */}
+          {!isPasswordRequired && (
+            <button
+              onClick={() => setViewMode(v => (v === 'canvas' ? 'reflow' : 'canvas'))}
+              className={`md:hidden p-2 rounded-xl transition ${
+                viewMode === 'reflow'
+                  ? 'bg-sky-500 text-slate-950 font-bold'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800'
+              }`}
+              title="Reading View (Mobile Reflow)"
+            >
+              <BookOpen className="w-4 h-4" />
+            </button>
+          )}
+
           {/* Mobile search trigger */}
           {!isPasswordRequired && (
             <button
@@ -636,6 +934,21 @@ export const PDFViewerModal: React.FC<PDFViewerModalProps> = ({
               title="Search"
             >
               <Search className="w-4 h-4" />
+            </button>
+          )}
+
+          {/* Quick Bookmark Page Button */}
+          {!isPasswordRequired && (
+            <button
+              onClick={() => {
+                setShowThumbnails(true);
+                setSidebarTab('bookmarks');
+                setIsAddingBookmark(true);
+              }}
+              className="p-2 rounded-xl text-slate-400 hover:text-sky-300 hover:bg-slate-800 transition"
+              title="Bookmark Current Page (B)"
+            >
+              <BookmarkCheck className="w-4 h-4" />
             </button>
           )}
 
@@ -792,61 +1105,248 @@ export const PDFViewerModal: React.FC<PDFViewerModalProps> = ({
 
       {/* Main Body: Sidebar Thumbnails + Canvas Viewport + Meta Drawer */}
       <div className="flex-1 flex overflow-hidden relative" ref={containerRef}>
-        {/* Left Thumbnails Drawer */}
+        {/* Left Drawer: Thumbnails & Page Bookmarks */}
         {showThumbnails && numPages > 0 && !isPasswordRequired && (
-          <div className="w-40 sm:w-56 shrink-0 bg-[#090e1a] border-r border-slate-800/80 p-3 overflow-y-auto flex flex-col gap-3 z-10 transition-all">
-            <div className="text-xs font-semibold text-slate-400 px-1 uppercase tracking-wider flex items-center justify-between">
-              <span>Pages</span>
-              <span className="font-mono text-[11px] text-sky-400">{numPages}</span>
+          <div className="w-52 sm:w-64 shrink-0 bg-[#090e1a] border-r border-slate-800/80 p-3 overflow-y-auto flex flex-col gap-3 z-10 transition-all">
+            {/* Segmented Control */}
+            <div className="flex rounded-xl bg-slate-900/80 p-0.5 border border-slate-800 text-[11px] shrink-0">
+              <button
+                onClick={() => setSidebarTab('thumbnails')}
+                className={`flex-1 py-1.5 rounded-lg font-medium transition ${
+                  sidebarTab === 'thumbnails'
+                    ? 'bg-sky-500/20 text-sky-300 font-semibold'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Pages ({numPages})
+              </button>
+              <button
+                onClick={() => setSidebarTab('bookmarks')}
+                className={`flex-1 py-1.5 rounded-lg font-medium transition flex items-center justify-center gap-1 ${
+                  sidebarTab === 'bookmarks'
+                    ? 'bg-sky-500/20 text-sky-300 font-semibold'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <span>Bookmarks</span>
+                {(docItem?.pageBookmarks?.length || 0) > 0 && (
+                  <span className="font-mono text-[9px] px-1.5 py-0.2 rounded-full bg-sky-500/30 text-sky-200">
+                    {docItem?.pageBookmarks?.length}
+                  </span>
+                )}
+              </button>
             </div>
-            <div className="space-y-2.5">
-              {Array.from({ length: numPages }, (_, i) => i + 1).map(pageIdx => {
-                const hasSearchMatch = searchResults.some(m => m.pageNumber === pageIdx);
-                return (
+
+            {/* Tab 1: Thumbnails */}
+            {sidebarTab === 'thumbnails' && (
+              <div className="space-y-2.5">
+                {Array.from({ length: numPages }, (_, i) => i + 1).map(pageIdx => {
+                  const hasSearchMatch = searchResults.some(m => m.pageNumber === pageIdx);
+                  const pageBookmarks = (docItem?.pageBookmarks || []).filter(b => b.pageNumber === pageIdx);
+                  return (
+                    <button
+                      key={pageIdx}
+                      onClick={() => setCurrentPage(pageIdx)}
+                      className={`w-full group p-2 rounded-xl border text-left transition-all ${
+                        currentPage === pageIdx
+                          ? 'bg-sky-500/15 border-sky-400 shadow-md shadow-sky-500/10'
+                          : hasSearchMatch
+                          ? 'bg-amber-500/10 border-amber-500/40'
+                          : 'bg-slate-900/50 border-slate-800 hover:border-slate-700'
+                      }`}
+                    >
+                      <div className="aspect-[3/4] bg-white rounded-lg flex items-center justify-center text-slate-400 text-xs font-mono shadow-sm group-hover:scale-[1.02] transition-transform relative overflow-hidden">
+                        {pageIdx === 1 && docItem?.thumbnailDataUrl ? (
+                          <img
+                            src={docItem.thumbnailDataUrl}
+                            alt="Page 1"
+                            className="w-full h-full object-cover rounded-lg"
+                          />
+                        ) : (
+                          <div className="flex flex-col items-center gap-1 text-slate-400">
+                            <FileText className="w-5 h-5" />
+                            <span className="text-[10px]">p. {pageIdx}</span>
+                          </div>
+                        )}
+                        {pageBookmarks.length > 0 && (
+                          <div className="absolute top-1 right-1 flex gap-0.5">
+                            {pageBookmarks.map(b => (
+                              <span
+                                key={b.id}
+                                className="w-2.5 h-2.5 rounded-full shadow-sm border border-black/40"
+                                style={{ backgroundColor: b.color || '#38bdf8' }}
+                                title={b.title}
+                              />
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <div className="mt-1.5 flex items-center justify-between text-[11px]">
+                        <span
+                          className={`font-medium ${
+                            currentPage === pageIdx ? 'text-sky-300 font-semibold' : 'text-slate-400'
+                          }`}
+                        >
+                          Page {pageIdx}
+                        </span>
+                        {hasSearchMatch && (
+                          <span className="w-1.5 h-1.5 rounded-full bg-amber-400" title="Search match" />
+                        )}
+                        {currentPage === pageIdx && !hasSearchMatch && (
+                          <span className="w-1.5 h-1.5 rounded-full bg-sky-400" />
+                        )}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Tab 2: Bookmarks & Sticky Notes */}
+            {sidebarTab === 'bookmarks' && (
+              <div className="space-y-3">
+                {/* Add Bookmark Action */}
+                {!isAddingBookmark ? (
                   <button
-                    key={pageIdx}
-                    onClick={() => setCurrentPage(pageIdx)}
-                    className={`w-full group p-2 rounded-xl border text-left transition-all ${
-                      currentPage === pageIdx
-                        ? 'bg-sky-500/15 border-sky-400 shadow-md shadow-sky-500/10'
-                        : hasSearchMatch
-                        ? 'bg-amber-500/10 border-amber-500/40'
-                        : 'bg-slate-900/50 border-slate-800 hover:border-slate-700'
-                    }`}
+                    onClick={() => {
+                      setBookmarkTitle(`Page ${currentPage}`);
+                      setBookmarkNote('');
+                      setIsAddingBookmark(true);
+                    }}
+                    className="w-full flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/30 text-sky-300 font-semibold text-xs transition"
                   >
-                    <div className="aspect-[3/4] bg-white rounded-lg flex items-center justify-center text-slate-400 text-xs font-mono shadow-sm group-hover:scale-[1.02] transition-transform">
-                      {pageIdx === 1 && docItem?.thumbnailDataUrl ? (
-                        <img
-                          src={docItem.thumbnailDataUrl}
-                          alt="Page 1"
-                          className="w-full h-full object-cover rounded-lg"
-                        />
-                      ) : (
-                        <div className="flex flex-col items-center gap-1 text-slate-400">
-                          <FileText className="w-5 h-5" />
-                          <span className="text-[10px]">p. {pageIdx}</span>
-                        </div>
-                      )}
+                    <BookmarkCheck className="w-3.5 h-3.5" />
+                    <span>Bookmark Page {currentPage}</span>
+                  </button>
+                ) : (
+                  <form onSubmit={handleAddBookmark} className="p-3 rounded-2xl bg-slate-900 border border-sky-500/40 space-y-2.5 animate-in fade-in">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-sky-300 flex items-center gap-1">
+                        <Bookmark className="w-3 h-3" />
+                        <span>Bookmark Page {currentPage}</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setIsAddingBookmark(false)}
+                        className="text-slate-500 hover:text-white text-xs"
+                      >
+                        ✕
+                      </button>
                     </div>
-                    <div className="mt-1.5 flex items-center justify-between text-[11px]">
-                      <span
-                        className={`font-medium ${
-                          currentPage === pageIdx ? 'text-sky-300 font-semibold' : 'text-slate-400'
+
+                    <div>
+                      <input
+                        type="text"
+                        placeholder="Bookmark label (e.g. Exam slot)"
+                        value={bookmarkTitle}
+                        onChange={e => setBookmarkTitle(e.target.value)}
+                        autoFocus
+                        className="w-full px-2.5 py-1.5 rounded-lg bg-slate-950 border border-slate-700 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-sky-400"
+                      />
+                    </div>
+
+                    <div>
+                      <textarea
+                        placeholder="Add personal note (optional)..."
+                        value={bookmarkNote}
+                        onChange={e => setBookmarkNote(e.target.value)}
+                        rows={2}
+                        className="w-full px-2.5 py-1.5 rounded-lg bg-slate-950 border border-slate-700 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-sky-400 resize-none"
+                      />
+                    </div>
+
+                    {/* Color Picker Chips */}
+                    <div className="flex items-center gap-1.5 pt-0.5">
+                      <span className="text-[10px] text-slate-400 mr-1">Color:</span>
+                      {['#38bdf8', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6'].map(col => (
+                        <button
+                          key={col}
+                          type="button"
+                          onClick={() => setBookmarkColor(col)}
+                          className={`w-5 h-5 rounded-full transition-transform ${
+                            bookmarkColor === col ? 'scale-125 ring-2 ring-white ring-offset-1 ring-offset-slate-900' : 'hover:scale-110'
+                          }`}
+                          style={{ backgroundColor: col }}
+                        />
+                      ))}
+                    </div>
+
+                    <div className="flex gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setIsAddingBookmark(false)}
+                        className="flex-1 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-[11px] text-slate-400 font-medium"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={isSavingBookmark}
+                        className="flex-1 py-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-slate-950 font-bold text-[11px] disabled:opacity-50"
+                      >
+                        {isSavingBookmark ? 'Saving...' : 'Save'}
+                      </button>
+                    </div>
+                  </form>
+                )}
+
+                {/* Bookmark Items List */}
+                <div className="space-y-2">
+                  {(docItem?.pageBookmarks || []).length === 0 ? (
+                    <div className="text-center py-6 px-2 text-slate-500 space-y-2">
+                      <BookmarkCheck className="w-8 h-8 opacity-30 mx-auto text-sky-400" />
+                      <p className="text-xs">No bookmarks yet.</p>
+                      <p className="text-[10px] text-slate-500">
+                        Mark important sections, exam dates, or study notes for fast 1-click access.
+                      </p>
+                    </div>
+                  ) : (
+                    (docItem?.pageBookmarks || []).map(bm => (
+                      <div
+                        key={bm.id}
+                        className={`p-2.5 rounded-xl border transition group ${
+                          currentPage === bm.pageNumber
+                            ? 'bg-sky-500/10 border-sky-500/40'
+                            : 'bg-slate-900/60 border-slate-800 hover:border-slate-700'
                         }`}
                       >
-                        Page {pageIdx}
-                      </span>
-                      {hasSearchMatch && (
-                        <span className="w-1.5 h-1.5 rounded-full bg-amber-400" title="Search match" />
-                      )}
-                      {currentPage === pageIdx && !hasSearchMatch && (
-                        <span className="w-1.5 h-1.5 rounded-full bg-sky-400" />
-                      )}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
+                        <div className="flex items-start justify-between gap-1.5">
+                          <button
+                            onClick={() => setCurrentPage(bm.pageNumber)}
+                            className="flex-1 text-left min-w-0"
+                          >
+                            <div className="flex items-center gap-1.5">
+                              <span
+                                className="w-2.5 h-2.5 rounded-full shrink-0"
+                                style={{ backgroundColor: bm.color || '#38bdf8' }}
+                              />
+                              <span className="text-[10px] font-mono font-bold text-sky-300 bg-sky-500/10 px-1.5 py-0.2 rounded">
+                                p. {bm.pageNumber}
+                              </span>
+                              <span className="text-xs font-semibold text-white truncate">
+                                {bm.title}
+                              </span>
+                            </div>
+                            {bm.note && (
+                              <p className="text-[11px] text-slate-300 mt-1 line-clamp-2 italic pl-4">
+                                "{bm.note}"
+                              </p>
+                            )}
+                          </button>
+                          <button
+                            onClick={() => handleDeleteBookmark(bm.id)}
+                            className="opacity-0 group-hover:opacity-100 p-1 text-slate-500 hover:text-rose-400 transition"
+                            title="Delete bookmark"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -945,9 +1445,191 @@ export const PDFViewerModal: React.FC<PDFViewerModalProps> = ({
                 </button>
               </div>
             </div>
+          ) : viewMode === 'reflow' ? (
+            /* Responsive Text Reflow Reader View */
+            <div className="w-full max-w-3xl mx-auto h-full flex flex-col justify-start py-4 px-2 sm:px-6">
+              {/* Reader Sub-Toolbar */}
+              <div className="flex flex-wrap items-center justify-between gap-2.5 p-3 rounded-2xl bg-[#0d1424] border border-slate-800 text-xs mb-4 shadow-xl shrink-0">
+                {/* Theme Palette Switcher */}
+                <div className="flex items-center gap-1 bg-slate-900/80 p-1 rounded-xl border border-slate-800">
+                  {[
+                    { id: 'day', label: 'Day', bg: 'bg-slate-100 text-slate-900' },
+                    { id: 'sepia', label: 'Sepia', bg: 'bg-[#fbf0d9] text-[#3d2b1f]' },
+                    { id: 'slate', label: 'Dark', bg: 'bg-slate-800 text-slate-200' },
+                    { id: 'oled', label: 'OLED', bg: 'bg-black text-slate-100 border border-slate-800' },
+                  ].map(t => (
+                    <button
+                      key={t.id}
+                      onClick={() => setReflowTheme(t.id as 'day' | 'sepia' | 'slate' | 'oled')}
+                      className={`px-2 py-1 rounded-lg text-[11px] font-medium transition ${
+                        reflowTheme === t.id
+                          ? `${t.bg} font-bold shadow-sm ring-1 ring-sky-400/50`
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Font Size & Family Controls */}
+                <div className="flex items-center gap-1.5 bg-slate-900/80 p-1 rounded-xl border border-slate-800">
+                  <button
+                    onClick={() => setReflowFontSize(s => Math.max(13, s - 1))}
+                    className="p-1 px-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800"
+                    title="Smaller Text"
+                  >
+                    <Type className="w-3.5 h-3.5" />-
+                  </button>
+                  <span className="font-mono text-[11px] text-sky-400 px-1">{reflowFontSize}px</span>
+                  <button
+                    onClick={() => setReflowFontSize(s => Math.min(26, s + 1))}
+                    className="p-1 px-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800"
+                    title="Larger Text"
+                  >
+                    <Type className="w-3.5 h-3.5" />+
+                  </button>
+
+                  <div className="w-px h-3 bg-slate-800 mx-0.5" />
+
+                  <button
+                    onClick={() => {
+                      const next =
+                        reflowFontFamily === 'sans' ? 'serif' : reflowFontFamily === 'serif' ? 'mono' : 'sans';
+                      setReflowFontFamily(next);
+                    }}
+                    className="px-2 py-0.5 rounded-lg text-[11px] text-slate-300 hover:bg-slate-800 uppercase font-mono"
+                    title="Switch Font Family"
+                  >
+                    {reflowFontFamily}
+                  </button>
+                </div>
+
+                {/* TTS Read Aloud & Copy Actions */}
+                <div className="flex items-center gap-1.5">
+                  {/* TTS Read Aloud */}
+                  <div className="flex items-center gap-1 bg-slate-900/80 p-1 rounded-xl border border-slate-800">
+                    {!isSpeaking || isSpeechPaused ? (
+                      <button
+                        onClick={handlePlayTTS}
+                        disabled={!reflowText.trim()}
+                        className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 font-medium text-[11px] disabled:opacity-40 transition"
+                        title="Listen to this page (Read Aloud)"
+                      >
+                        <Volume2 className="w-3.5 h-3.5" />
+                        <span>{isSpeechPaused ? 'Resume' : 'Listen'}</span>
+                      </button>
+                    ) : (
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={handlePauseTTS}
+                          className="p-1 rounded-lg text-amber-400 hover:bg-slate-800 transition"
+                          title="Pause Speech"
+                        >
+                          <Pause className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={handleStopTTS}
+                          className="p-1 rounded-lg text-rose-400 hover:bg-slate-800 transition"
+                          title="Stop Speech"
+                        >
+                          <Square className="w-3.5 h-3.5" />
+                        </button>
+                        <span className="text-[10px] text-emerald-400 font-mono animate-pulse px-1">Speaking</span>
+                      </div>
+                    )}
+
+                    <select
+                      value={speechRate}
+                      onChange={e => setSpeechRate(parseFloat(e.target.value))}
+                      className="bg-transparent text-[10px] font-mono text-slate-400 focus:outline-none cursor-pointer pr-1"
+                      title="Speech Rate"
+                    >
+                      <option value="0.8" className="bg-slate-900 text-white">0.8x</option>
+                      <option value="1" className="bg-slate-900 text-white">1.0x</option>
+                      <option value="1.25" className="bg-slate-900 text-white">1.25x</option>
+                      <option value="1.5" className="bg-slate-900 text-white">1.5x</option>
+                    </select>
+                  </div>
+
+                  {/* Copy Text Button */}
+                  <button
+                    onClick={handleCopyReflowText}
+                    disabled={!reflowText.trim()}
+                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-800 text-[11px] transition disabled:opacity-40"
+                    title="Copy Page Text"
+                  >
+                    {copiedText ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copiedText ? 'Copied!' : 'Copy'}</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Text Body Container */}
+              <div
+                className={`flex-1 overflow-y-auto rounded-3xl p-6 sm:p-10 shadow-2xl transition-colors ${
+                  reflowTheme === 'day'
+                    ? 'bg-[#fcfdfd] text-[#0f172a] shadow-slate-900/10'
+                    : reflowTheme === 'sepia'
+                    ? 'bg-[#fcf5e5] text-[#3d2b1f] shadow-amber-950/20'
+                    : reflowTheme === 'oled'
+                    ? 'bg-black text-[#e2e8f0] border border-neutral-900'
+                    : 'bg-[#0b101d] text-slate-200 border border-slate-800'
+                }`}
+                style={{
+                  fontSize: `${reflowFontSize}px`,
+                  fontFamily:
+                    reflowFontFamily === 'serif'
+                      ? 'Georgia, Cambria, "Times New Roman", Times, serif'
+                      : reflowFontFamily === 'mono'
+                      ? 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace'
+                      : 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+                  lineHeight: '1.75',
+                }}
+              >
+                {isLoadingReflow ? (
+                  <div className="flex flex-col items-center justify-center h-64 gap-3 text-slate-400">
+                    <Loader2 className="w-6 h-6 animate-spin text-sky-400" />
+                    <p className="text-xs">Extracting readable text from Page {currentPage}...</p>
+                  </div>
+                ) : reflowText.trim().length > 0 ? (
+                  <div className="space-y-4 select-text">
+                    <div className="pb-3 border-b border-black/10 dark:border-white/10 flex items-center justify-between text-xs opacity-60">
+                      <span>{docItem?.displayName}</span>
+                      <span className="font-mono">Page {currentPage} of {numPages}</span>
+                    </div>
+                    {reflowText.split(/\n\n+/).map((para, idx) => (
+                      <p key={idx} className="leading-relaxed">
+                        {para}
+                      </p>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center justify-center h-64 text-center gap-3 max-w-sm mx-auto">
+                    <BookOpen className="w-8 h-8 opacity-40 text-sky-400" />
+                    <div>
+                      <p className="font-semibold text-sm">No selectable digital text on Page {currentPage}</p>
+                      <p className="text-xs opacity-70 mt-1">
+                        This page appears to be a scanned image or artwork. Switch back to Canvas View to inspect it directly.
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => setViewMode('canvas')}
+                      className="px-4 py-2 rounded-xl bg-sky-500/20 text-sky-300 font-semibold text-xs hover:bg-sky-500/30 transition"
+                    >
+                      Switch to Canvas View
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
           ) : (
             <div className="shadow-2xl shadow-black/80 rounded-md overflow-hidden my-auto transition-transform">
-              <canvas ref={canvasRef} className="block max-w-full" />
+              <canvas
+                ref={canvasRef}
+                style={{ filter: getCanvasToneFilter() }}
+                className="block max-w-full"
+              />
             </div>
           )}
         </div>
@@ -1190,6 +1872,24 @@ export const PDFViewerModal: React.FC<PDFViewerModalProps> = ({
                 <span className="text-slate-400">Rotate</span>
                 <kbd className="px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700 font-mono text-[11px] text-sky-300">
                   R
+                </kbd>
+              </div>
+              <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 flex justify-between items-center">
+                <span className="text-slate-400">Reading View</span>
+                <kbd className="px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700 font-mono text-[11px] text-sky-300">
+                  Alt + R
+                </kbd>
+              </div>
+              <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 flex justify-between items-center">
+                <span className="text-slate-400">Bookmark</span>
+                <kbd className="px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700 font-mono text-[11px] text-sky-300">
+                  B
+                </kbd>
+              </div>
+              <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 flex justify-between items-center">
+                <span className="text-slate-400">Eye Comfort</span>
+                <kbd className="px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700 font-mono text-[11px] text-sky-300">
+                  T
                 </kbd>
               </div>
               <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 flex justify-between items-center">

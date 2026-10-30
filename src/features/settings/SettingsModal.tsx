@@ -34,8 +34,9 @@ interface SettingsModalProps {
   onLogout: () => void;
   onOpenLayoutModal: () => void;
   onUpdateSettings: (newSettings: Partial<AppSettings>) => void;
-  onOpenBackup: (tab: 'export' | 'import') => void;
+  onOpenBackup: (tab: 'drive' | 'export' | 'import') => void;
   onLibraryCleared: () => void;
+  onOpenShortcuts?: () => void;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -49,6 +50,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onUpdateSettings,
   onOpenBackup,
   onLibraryCleared,
+  onOpenShortcuts,
 }) => {
   const [stats, setStats] = useState<StorageStats | null>(null);
   const [isClearing, setIsClearing] = useState(false);
@@ -159,7 +161,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <button
                       onClick={() => {
                         onClose();
-                        onOpenBackup('export');
+                        onOpenBackup('drive');
                       }}
                       className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-sky-500/15 hover:bg-sky-500/25 text-sky-300 border border-sky-500/30 text-xs font-medium transition"
                     >
@@ -207,6 +209,36 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     </svg>
                     <span>Google Sign In</span>
                   </button>
+                </div>
+              )}
+
+              {/* Auto Sync Toggle & Organization Settings */}
+              {user && (
+                <div className="mt-3 pt-3 border-t border-slate-800/80 space-y-2 text-xs">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="font-medium text-slate-200">Auto-Backup & Restore on Login</p>
+                      <p className="text-[11px] text-slate-400">
+                        Automatically reconciles vault and organizes files into category folders on login
+                      </p>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={settings.autoSyncEnabled !== false}
+                        onChange={e => onUpdateSettings({ autoSyncEnabled: e.target.checked })}
+                        className="sr-only peer"
+                      />
+                      <div className="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-sky-500"></div>
+                    </label>
+                  </div>
+
+                  <div className="p-2.5 rounded-lg bg-slate-950/50 border border-slate-800/80 text-[11px] text-slate-400 space-y-1">
+                    <p className="font-semibold text-slate-300">Organized Folder Structure:</p>
+                    <p className="font-mono text-[10px] text-sky-300">
+                      DocPocket Vault/ [Timetables, College, Certificates, Projects, Personal, Subjects, Documents]
+                    </p>
+                  </div>
                 </div>
               )}
             </div>
@@ -409,6 +441,30 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
           </div>
 
+          {/* Keyboard Shortcuts */}
+          {onOpenShortcuts && (
+            <div className="space-y-2">
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                Navigation
+              </h3>
+              <div className="p-4 rounded-xl bg-slate-900/50 border border-slate-800 flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold text-white">Keyboard Shortcuts</p>
+                  <p className="text-[11px] text-slate-400">Power navigation shortcuts and hotkeys</p>
+                </div>
+                <button
+                  onClick={() => {
+                    onClose();
+                    onOpenShortcuts();
+                  }}
+                  className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 border border-slate-700 transition"
+                >
+                  View Shortcuts (?)
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Privacy & Architecture Notice */}
           <div className="p-4 rounded-xl bg-sky-950/30 border border-sky-500/20 text-xs space-y-1.5 text-slate-300">
             <div className="flex items-center gap-2 font-semibold text-sky-300">
@@ -416,7 +472,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               Private & Encrypted Security
             </div>
             <p className="text-slate-400 text-[11px] leading-relaxed">
-              Your PDF files are kept on-device in browser IndexedDB. When signed in with Google, your document catalog and dashboard preferences are privately synced to your personal Firebase Firestore database.
+              Your PDF files are stored on-device in browser IndexedDB. When signed in with Google, your documents, categorized folders, and dashboard preferences are privately synced and backed up directly to your personal Google Drive account.
             </p>
           </div>
 

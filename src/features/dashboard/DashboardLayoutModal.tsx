@@ -50,8 +50,8 @@ const SECTION_METADATA: Record<
     icon: Layers,
   },
   recent_opened: {
-    label: 'Recently Opened Documents',
-    description: 'Recently read PDF files for fast resuming',
+    label: 'Recent Documents Carousel',
+    description: 'Visual carousel with previews of recently read and newly added PDFs',
     icon: Clock,
   },
   recent_imports: {

@@ -82,6 +82,15 @@ export const DocumentRow: React.FC<DocumentRowProps> = ({
               <Layers className="w-3 h-3 text-sky-400" />
               {document.pageCount}p
             </span>
+            {document.pageBookmarks && document.pageBookmarks.length > 0 && (
+              <>
+                <span>•</span>
+                <span className="font-mono text-amber-300 flex items-center gap-1 bg-amber-500/10 px-1.5 py-0.2 rounded border border-amber-500/20">
+                  <Bookmark className="w-2.5 h-2.5 fill-amber-400 text-amber-400" />
+                  <span>{document.pageBookmarks.length} notes</span>
+                </span>
+              </>
+            )}
           </div>
 
           {/* Tags on row */}

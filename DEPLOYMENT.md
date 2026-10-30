@@ -112,17 +112,25 @@ DocPocket is responsive and provides a multi-column desktop layout with a sideba
 
 ## 5. Google Drive Cross-Platform Sync Architecture
 
-DocPocket now utilizes **Google Drive v3 REST API** for cloud backup and multi-device synchronization, eliminating reliance on third-party databases:
+DocPocket utilizes **Google Drive v3 REST API** for automatic cloud backup, category-based folder organization, and multi-device synchronization:
 
-1. **Dedicated User Vault (`DocPocket Vault`):**
-   - Automatically maintains a dedicated folder in the user's personal Google Drive called `DocPocket Vault`.
-   - Stores full PDF binaries and a structured `vault-manifest.json` containing collections, categories, tags, timetable preferences, and layout order.
-2. **True Cross-Platform Sync:**
-   - **On Android:** Log in with Google to restore or sync your entire vault into on-device IndexedDB for instant offline reading.
-   - **On Desktop:** Import or compress PDFs on your computer, click "Backup to Google Drive", and immediately access them on your phone.
+1. **Automatic Folder Creation on User Login:**
+   - As soon as the user logs in, DocPocket initializes the root **`DocPocket Vault`** folder and standard category subfolders in Google Drive:
+     - `📁 DocPocket Vault/`
+       - `📄 vault-manifest.json` (Catalog index, tags, settings, layout preferences)
+       - `📁 Timetables/` (Class routines, exam schedules, and timetable PDFs)
+       - `📁 College/` (Syllabus, university records, lecture notes)
+       - `📁 Certificates/` (Degrees, credentials, workshop verifications)
+       - `📁 Projects/` (Project briefs, reports, research documents)
+       - `📁 Personal/` (Identity cards, medical records, financial papers)
+       - `📁 Subjects/` (Course textbooks, study guides)
+       - `📁 Documents/` (General inbox and custom category PDFs)
+2. **Auto-Backup & Auto-Restore on Login:**
+   - **Cross-Device Restore:** When logging into a new phone or desktop browser, DocPocket automatically pulls existing documents and binaries from Google Drive directly into the device's local IndexedDB.
+   - **Reconciliation:** Any local documents that are not yet on Google Drive are automatically uploaded into their respective category subfolders.
+   - **Continuous Background Backup:** When importing new PDFs, converting images to PDF, or compressing documents, DocPocket automatically synchronizes the new files to Google Drive in the background.
 3. **Data Privacy & Ownership:**
-   - All files are stored directly inside the user's personal Google Drive account. No third-party servers hold document copies.
-   - Users can open, download, or share files directly from `drive.google.com` inside their `DocPocket Vault` folder.
+   - All files remain stored directly in the user's personal Google Drive account. Users can view, download, or share files directly from `drive.google.com` or the Google Drive mobile app.
 
 ---
 

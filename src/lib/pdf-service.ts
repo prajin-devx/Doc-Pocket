@@ -132,3 +132,75 @@ export async function inspectPDF(buffer: ArrayBuffer, password?: string): Promis
     throw new Error(err instanceof Error ? err.message : 'Invalid or corrupted PDF file');
   }
 }
+
+/**
+ * Extracts plain text from a specific page of a PDF ArrayBuffer
+ */
+export async function extractPDFPageText(
+  buffer: ArrayBuffer,
+  pageNumber: number,
+  password?: string
+): Promise<string> {
+  const bufferClone = buffer.slice(0);
+  const loadingTask = pdfjsLib.getDocument({
+    data: new Uint8Array(bufferClone),
+    cMapUrl: 'https://unpkg.com/pdfjs-dist@4.0.379/cmaps/',
+    cMapPacked: true,
+    password: password || undefined,
+  });
+
+  const pdfDoc = await loadingTask.promise;
+  const page = await pdfDoc.getPage(pageNumber);
+  const textContent = await page.getTextContent();
+  return textContent.items
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .map((item: any) => item.str || '')
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Extracts plain text across document pages for full-text search indexing and reading
+ */
+export async function extractAllPDFText(
+  buffer: ArrayBuffer,
+  maxPages = 30,
+  password?: string
+): Promise<{ fullText: string; pageTexts: { page: number; text: string }[] }> {
+  try {
+    const bufferClone = buffer.slice(0);
+    const loadingTask = pdfjsLib.getDocument({
+      data: new Uint8Array(bufferClone),
+      cMapUrl: 'https://unpkg.com/pdfjs-dist@4.0.379/cmaps/',
+      cMapPacked: true,
+      password: password || undefined,
+    });
+
+    const pdfDoc = await loadingTask.promise;
+    const totalPages = Math.min(pdfDoc.numPages, maxPages);
+    const pageTexts: { page: number; text: string }[] = [];
+
+    for (let p = 1; p <= totalPages; p++) {
+      const page = await pdfDoc.getPage(p);
+      const content = await page.getTextContent();
+      const pageStr = content.items
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .map((item: any) => item.str || '')
+        .join(' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (pageStr) {
+        pageTexts.push({ page: p, text: pageStr });
+      }
+    }
+
+    return {
+      fullText: pageTexts.map(pt => pt.text).join(' \n '),
+      pageTexts,
+    };
+  } catch {
+    return { fullText: '', pageTexts: [] };
+  }
+}
+

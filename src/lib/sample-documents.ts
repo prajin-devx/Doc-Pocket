@@ -53,6 +53,16 @@ export const sampleVaultDocuments = [
     category: 'inbox',
     tags: ['guide', 'overview', 'pwa'],
     description: 'Welcome to DocPocket. Essential overview of on-device IndexedDB storage and offline usage.',
+    pageBookmarks: [
+      {
+        id: 'bm_sample_1',
+        pageNumber: 1,
+        title: 'Core Architecture Overview',
+        note: 'IndexedDB on-device privacy guarantee and offline sync.',
+        createdAt: 1704067200000,
+        color: '#38bdf8',
+      },
+    ],
     generateBuffer: () =>
       createSimplePDF(
         'DocPocket Personal Vault Guide',
@@ -92,6 +102,16 @@ export const sampleVaultDocuments = [
     category: 'timetable',
     tags: ['timetable', 'routine', 'schedule', 'classes'],
     description: 'Weekly schedule for lectures, labs, seminar sessions, and faculty office hours.',
+    pageBookmarks: [
+      {
+        id: 'bm_sample_2',
+        pageNumber: 1,
+        title: 'Lab Sessions & Schedule',
+        note: 'Database Systems Lab Mon 11:30 AM & Web Tech Lab Wed 1:30 PM.',
+        createdAt: 1704067200000,
+        color: '#f59e0b',
+      },
+    ],
     generateBuffer: () =>
       createSimplePDF(
         'Semester VI - Weekly Class Timetable',

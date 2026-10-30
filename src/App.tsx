@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   LayoutDashboard,
   Folder,
@@ -21,9 +21,10 @@ import {
   LogOut,
   SlidersHorizontal,
   Cloud,
-  FileImage,
-  Minimize2,
-  Sparkles,
+  Loader2,
+  CheckCircle2,
+  AlertCircle,
+  Keyboard,
 } from 'lucide-react';
 import { AppSettings, CollectionItem, DashboardSectionId, DocumentItem, UserProfile } from './types';
 import { db, initializeDatabase } from './lib/database';
@@ -35,7 +36,6 @@ import { googleDriveService } from './lib/google-drive-service';
 import { DashboardView } from './features/dashboard/DashboardView';
 import { DocumentLibraryView } from './features/documents/DocumentLibraryView';
 import { CollectionsView } from './features/collections/CollectionsView';
-import { PdfToolsView } from './features/tools/PdfToolsView';
 import { ImportModal } from './features/documents/ImportModal';
 import { PDFViewerModal } from './features/pdf-viewer/PDFViewerModal';
 import { BackupModal } from './features/backup/BackupModal';
@@ -45,6 +45,7 @@ import { DeleteConfirmModal } from './features/documents/DeleteConfirmModal';
 import { DashboardLayoutModal } from './features/dashboard/DashboardLayoutModal';
 import { PWAInstallButton } from './components/common/PWAInstallButton';
 import { OfflineIndicator } from './components/common/OfflineIndicator';
+import { KeyboardShortcutsModal } from './components/common/KeyboardShortcutsModal';
 
 const DEFAULT_SETTINGS: AppSettings = {
   theme: 'dark',
@@ -63,6 +64,7 @@ const DEFAULT_SETTINGS: AppSettings = {
     'recent_imports',
   ],
   hiddenDashboardSections: [],
+  autoSyncEnabled: true,
 };
 
 export default function App() {
@@ -74,6 +76,14 @@ export default function App() {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
 
+  // Auto-sync status for Google Drive
+  const [syncStatus, setSyncStatus] = useState<{
+    state: 'idle' | 'syncing' | 'synced' | 'error';
+    message: string;
+    progress?: number;
+    folderUrl?: string;
+  }>({ state: 'idle', message: '' });
+
   const [settings, setSettings] = useState<AppSettings>(() => {
     try {
       const saved = localStorage.getItem('docpocket_settings');
@@ -84,6 +94,7 @@ export default function App() {
           ...parsed,
           dashboardSectionOrder: parsed.dashboardSectionOrder || DEFAULT_SETTINGS.dashboardSectionOrder,
           hiddenDashboardSections: parsed.hiddenDashboardSections || [],
+          autoSyncEnabled: parsed.autoSyncEnabled !== undefined ? parsed.autoSyncEnabled : true,
         };
       }
       return DEFAULT_SETTINGS;
@@ -93,8 +104,7 @@ export default function App() {
   });
 
   // Navigation
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'library' | 'collections' | 'tools'>('dashboard');
-  const [toolsInitialTab, setToolsInitialTab] = useState<'image-to-pdf' | 'compressor'>('image-to-pdf');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'library' | 'collections'>('dashboard');
   const [libraryFilters, setLibraryFilters] = useState<{
     category?: string;
     onlyFavorites?: boolean;
@@ -109,6 +119,10 @@ export default function App() {
   const [readerDocId, setReaderDocId] = useState<string | null>(null);
   const [isImportOpen, setIsImportOpen] = useState(false);
   const [importCategory, setImportCategory] = useState<string>('inbox');
+  const [draggedFiles, setDraggedFiles] = useState<File[]>([]);
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
+  const [isShortcutsOpen, setIsShortcutsOpen] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const [isBackupOpen, setIsBackupOpen] = useState(false);
   const [backupTab, setBackupTab] = useState<'drive' | 'export' | 'import'>('drive');
   const [isManageCollectionsOpen, setIsManageCollectionsOpen] = useState(false);
@@ -117,7 +131,82 @@ export default function App() {
   const [deleteDoc, setDeleteDoc] = useState<DocumentItem | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  // Listen to Google Auth state
+  // Load Initial Vault Data from IndexedDB
+  const refreshVaultData = useCallback(async () => {
+    await initializeDatabase();
+    const [docs, cols, counts, tags, stats] = await Promise.all([
+      documentService.getAllDocuments(),
+      collectionService.getAllCollections(),
+      documentService.getCollectionCounts(),
+      documentService.getAllTags(),
+      storageService.getStorageStats(),
+    ]);
+
+    setDocuments(docs);
+    setCollections(cols);
+    setCollectionCounts(counts);
+    setAllTags(tags);
+    setTotalStorageBytes(stats.totalPdfBytes);
+  }, []);
+
+  // Automatic Sync, Category Organization & Auto-Restore on Login
+  const triggerAutoSync = useCallback(
+    async (activeSettings: AppSettings) => {
+      try {
+        setSyncStatus({ state: 'syncing', message: 'Organizing Google Drive Vault...', progress: 10 });
+        const result = await googleDriveService.performAutoSyncOnLogin(
+          activeSettings,
+          (percent, status) => {
+            setSyncStatus({ state: 'syncing', message: status, progress: percent });
+          }
+        );
+
+        if (result.settings) {
+          setSettings(prev => ({
+            ...prev,
+            ...result.settings,
+            dashboardSectionOrder: result.settings!.dashboardSectionOrder || prev.dashboardSectionOrder,
+            hiddenDashboardSections:
+              result.settings!.hiddenDashboardSections || prev.hiddenDashboardSections,
+            lastDriveSyncAt: Date.now(),
+          }));
+        } else {
+          setSettings(prev => ({ ...prev, lastDriveSyncAt: Date.now() }));
+        }
+
+        await refreshVaultData();
+
+        let finishMsg = 'All files organized in Drive';
+        if (result.restoredDocs > 0 && result.backedUpDocs > 0) {
+          finishMsg = `Restored ${result.restoredDocs} & backed up ${result.backedUpDocs} file(s)`;
+        } else if (result.restoredDocs > 0) {
+          finishMsg = `Restored ${result.restoredDocs} file(s) from Drive`;
+        } else if (result.backedUpDocs > 0) {
+          finishMsg = `Backed up ${result.backedUpDocs} file(s) to Drive`;
+        }
+
+        setSyncStatus({
+          state: 'synced',
+          message: finishMsg,
+          progress: 100,
+          folderUrl: result.folderUrl,
+        });
+
+        setTimeout(() => {
+          setSyncStatus(prev => (prev.state === 'synced' ? { ...prev, state: 'idle' } : prev));
+        }, 5000);
+      } catch (err) {
+        console.warn('Auto-sync notice:', err);
+        setSyncStatus({ state: 'error', message: 'Sync paused (offline or unauthenticated)' });
+        setTimeout(() => {
+          setSyncStatus(prev => (prev.state === 'error' ? { ...prev, state: 'idle' } : prev));
+        }, 5000);
+      }
+    },
+    [refreshVaultData]
+  );
+
+  // Listen to Google Auth state & trigger Auto-Backup / Auto-Restore on login
   useEffect(() => {
     const unsubscribe = initAuth(
       async (fbUser, token) => {
@@ -130,21 +219,9 @@ export default function App() {
           };
           setUser(profile);
 
-          // Try to load user's Google Drive preferences if available
-          if (token) {
-            try {
-              const manifest = await googleDriveService.fetchManifest();
-              if (manifest?.settings?.dashboardSectionOrder?.length) {
-                setSettings(prev => ({
-                  ...prev,
-                  dashboardSectionOrder: manifest.settings!.dashboardSectionOrder,
-                  hiddenDashboardSections:
-                    manifest.settings!.hiddenDashboardSections || prev.hiddenDashboardSections,
-                }));
-              }
-            } catch (err) {
-              console.warn('Could not load Google Drive settings:', err);
-            }
+          // Auto-sync & auto-restore upon login
+          if (token && settings.autoSyncEnabled !== false) {
+            triggerAutoSync(settings);
           }
         } else {
           setUser(null);
@@ -158,7 +235,7 @@ export default function App() {
     );
 
     return () => unsubscribe();
-  }, []);
+  }, [triggerAutoSync, settings.autoSyncEnabled]);
 
   // Apply theme class to document
   useEffect(() => {
@@ -179,29 +256,98 @@ export default function App() {
     localStorage.setItem('docpocket_settings', JSON.stringify(settings));
   }, [settings]);
 
-  // Load Initial Vault Data from IndexedDB
-  const refreshVaultData = useCallback(async () => {
-    await initializeDatabase();
-    const [docs, cols, counts, tags, stats] = await Promise.all([
-      documentService.getAllDocuments(),
-      collectionService.getAllCollections(),
-      documentService.getCollectionCounts(),
-      documentService.getAllTags(),
-      storageService.getStorageStats(),
-    ]);
-
-    setDocuments(docs);
-    setCollections(cols);
-    setCollectionCounts(counts);
-    setAllTags(tags);
-    setTotalStorageBytes(stats.totalPdfBytes);
-
-    // Vault refreshed locally
-  }, []);
-
   useEffect(() => {
     refreshVaultData();
   }, [refreshVaultData]);
+
+  // Global Drag-and-Drop for PDFs anywhere on the window
+  useEffect(() => {
+    const handleDragOver = (e: DragEvent) => {
+      e.preventDefault();
+      if (e.dataTransfer && e.dataTransfer.types.includes('Files')) {
+        setIsDraggingOver(true);
+      }
+    };
+
+    const handleDragLeave = (e: DragEvent) => {
+      if (!e.relatedTarget || (e.clientX === 0 && e.clientY === 0)) {
+        setIsDraggingOver(false);
+      }
+    };
+
+    const handleDrop = (e: DragEvent) => {
+      e.preventDefault();
+      setIsDraggingOver(false);
+      if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        const files = Array.from(e.dataTransfer.files).filter(
+          (f) => f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf')
+        );
+        if (files.length > 0) {
+          setDraggedFiles(files);
+          setImportCategory('inbox');
+          setIsImportOpen(true);
+        }
+      }
+    };
+
+    window.addEventListener('dragover', handleDragOver);
+    window.addEventListener('dragleave', handleDragLeave);
+    window.addEventListener('drop', handleDrop);
+
+    return () => {
+      window.removeEventListener('dragover', handleDragOver);
+      window.removeEventListener('dragleave', handleDragLeave);
+      window.removeEventListener('drop', handleDrop);
+    };
+  }, []);
+
+  // Global Keyboard Shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const isInput =
+        (e.target as HTMLElement)?.tagName === 'INPUT' ||
+        (e.target as HTMLElement)?.tagName === 'TEXTAREA';
+
+      // ⌘K or Ctrl+K: Focus search
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+        return;
+      }
+
+      // ⌘I or Ctrl+I: Open Import
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'i') {
+        e.preventDefault();
+        setDraggedFiles([]);
+        handleOpenImportModal();
+        return;
+      }
+
+      // ⌘B or Ctrl+B: Open Drive Vault
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'b') {
+        e.preventDefault();
+        setBackupTab('drive');
+        setIsBackupOpen(true);
+        return;
+      }
+
+      // ?: Open Shortcuts Guide (when not typing in an input)
+      if (e.key === '?' && !isInput && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        setIsShortcutsOpen((prev) => !prev);
+        return;
+      }
+
+      // Escape: Close shortcuts or drop overlay
+      if (e.key === 'Escape') {
+        setIsShortcutsOpen(false);
+        setIsDraggingOver(false);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   // Handlers
   const handleOpenDocument = (doc: DocumentItem) => {
@@ -260,8 +406,13 @@ export default function App() {
     }
   };
 
-  const handleOpenImportModal = (category = 'inbox') => {
+  const handleOpenImportModal = (category = 'inbox', files?: File[]) => {
     setImportCategory(category);
+    if (files && files.length > 0) {
+      setDraggedFiles(files);
+    } else {
+      setDraggedFiles([]);
+    }
     setIsImportOpen(true);
   };
 
@@ -285,6 +436,9 @@ export default function App() {
       };
       setUser(profile);
       await refreshVaultData();
+      if (settings.autoSyncEnabled !== false) {
+        triggerAutoSync(settings);
+      }
     } catch (err) {
       alert('Google Sign-In failed: ' + (err instanceof Error ? err.message : 'Error'));
     }
@@ -421,49 +575,7 @@ export default function App() {
               </span>
             </button>
 
-            <div className="pt-3 pb-1 px-3 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-              PDF Studio Tools
-            </div>
 
-            <button
-              onClick={() => {
-                setActiveTab('tools');
-                setToolsInitialTab('image-to-pdf');
-              }}
-              className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl font-medium transition ${
-                activeTab === 'tools' && toolsInitialTab === 'image-to-pdf'
-                  ? 'bg-sky-500/15 text-sky-400 border border-sky-500/30 font-semibold'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/60'
-              }`}
-            >
-              <div className="flex items-center gap-3">
-                <FileImage className="w-4 h-4 text-sky-400" />
-                <span>Image to PDF</span>
-              </div>
-              <span className="text-[9px] font-mono font-bold bg-sky-500/20 text-sky-300 px-1.5 py-0.5 rounded-full">
-                NEW
-              </span>
-            </button>
-
-            <button
-              onClick={() => {
-                setActiveTab('tools');
-                setToolsInitialTab('compressor');
-              }}
-              className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl font-medium transition ${
-                activeTab === 'tools' && toolsInitialTab === 'compressor'
-                  ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 font-semibold'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/60'
-              }`}
-            >
-              <div className="flex items-center gap-3">
-                <Minimize2 className="w-4 h-4 text-emerald-400" />
-                <span>PDF Compressor</span>
-              </div>
-              <span className="text-[9px] font-mono font-bold bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded-full">
-                PRO
-              </span>
-            </button>
 
             <div className="pt-3 pb-1 px-3 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
               Quick Views
@@ -654,8 +766,9 @@ export default function App() {
             <div className="hidden sm:block relative w-56 lg:w-72">
               <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
+                ref={searchInputRef}
                 type="text"
-                placeholder="Search timetable, vault..."
+                placeholder="Search timetable, vault... (⌘K)"
                 value={globalSearch}
                 onChange={e => setGlobalSearch(e.target.value)}
                 onKeyDown={e => {
@@ -664,9 +777,57 @@ export default function App() {
                     setActiveTab('library');
                   }
                 }}
-                className="w-full pl-9 pr-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-sky-500"
+                className="w-full pl-9 pr-10 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-sky-500"
               />
+              <span className="hidden lg:inline-block absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] font-mono text-slate-500 bg-slate-800 px-1.5 py-0.5 rounded border border-slate-700/60 pointer-events-none">
+                ⌘K
+              </span>
             </div>
+
+            {/* Keyboard Shortcuts Trigger Button */}
+            <button
+              onClick={() => setIsShortcutsOpen(true)}
+              className="hidden sm:flex items-center justify-center p-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-400 hover:text-white hover:bg-slate-800 transition"
+              title="Keyboard Shortcuts (?)"
+            >
+              <Keyboard className="w-4 h-4" />
+            </button>
+
+            {/* Live Google Drive Auto-Sync Indicator */}
+            {user && (
+              <div className="flex items-center">
+                {syncStatus.state === 'syncing' && (
+                  <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-sky-500/10 border border-sky-500/30 text-sky-400 text-xs font-medium animate-pulse">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                    <span className="hidden md:inline truncate max-w-[200px]">
+                      {syncStatus.message || 'Organizing Drive Vault...'}
+                    </span>
+                    <span className="md:hidden">Syncing</span>
+                  </div>
+                )}
+
+                {syncStatus.state === 'synced' && (
+                  <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-xs font-medium">
+                    <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                    <span className="hidden md:inline truncate max-w-[220px]">
+                      {syncStatus.message || 'Drive Synced'}
+                    </span>
+                    <span className="md:hidden">Synced</span>
+                  </div>
+                )}
+
+                {syncStatus.state === 'error' && (
+                  <button
+                    onClick={() => triggerAutoSync(settings)}
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs hover:bg-amber-500/25 transition"
+                    title="Click to retry auto-sync"
+                  >
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0 text-amber-400" />
+                    <span className="hidden md:inline text-[11px]">Retry Sync</span>
+                  </button>
+                )}
+              </div>
+            )}
 
             {/* Quick Customize Dashboard Order Button */}
             <button
@@ -809,39 +970,7 @@ export default function App() {
                 </span>
               </button>
 
-              <button
-                onClick={() => {
-                  setActiveTab('tools');
-                  setToolsInitialTab('image-to-pdf');
-                  setMobileMenuOpen(false);
-                }}
-                className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-slate-300 hover:bg-slate-900"
-              >
-                <div className="flex items-center gap-3">
-                  <FileImage className="w-4 h-4 text-sky-400" />
-                  <span>Image to PDF</span>
-                </div>
-                <span className="font-mono text-[10px] text-sky-400 bg-sky-500/10 px-2 py-0.5 rounded-full">
-                  NEW
-                </span>
-              </button>
 
-              <button
-                onClick={() => {
-                  setActiveTab('tools');
-                  setToolsInitialTab('compressor');
-                  setMobileMenuOpen(false);
-                }}
-                className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-slate-300 hover:bg-slate-900"
-              >
-                <div className="flex items-center gap-3">
-                  <Minimize2 className="w-4 h-4 text-emerald-400" />
-                  <span>PDF Compressor</span>
-                </div>
-                <span className="font-mono text-[10px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full">
-                  PRO
-                </span>
-              </button>
 
               <button
                 onClick={() => {
@@ -903,10 +1032,6 @@ export default function App() {
                 onOpenDocument={handleOpenDocument}
                 onOpenImport={handleOpenImportModal}
                 onNavigateToLibrary={handleNavigateToLibrary}
-                onNavigateToTools={tab => {
-                  setActiveTab('tools');
-                  setToolsInitialTab(tab || 'image-to-pdf');
-                }}
                 onToggleFavorite={handleToggleFavorite}
                 onTogglePinned={handleTogglePinned}
                 onDownload={handleDownload}
@@ -956,15 +1081,7 @@ export default function App() {
               />
             )}
 
-            {activeTab === 'tools' && (
-              <PdfToolsView
-                collections={collections}
-                documents={documents}
-                onOpenDocument={handleOpenDocument}
-                onRefreshVault={refreshVaultData}
-                initialTab={toolsInitialTab}
-              />
-            )}
+
           </div>
         </main>
 
@@ -1005,18 +1122,7 @@ export default function App() {
             <Plus className="w-6 h-6" />
           </button>
 
-          <button
-            onClick={() => {
-              setActiveTab('tools');
-              setToolsInitialTab('image-to-pdf');
-            }}
-            className={`flex flex-col items-center gap-1 py-1 px-3 text-[10px] font-medium transition ${
-              activeTab === 'tools' ? 'text-sky-400 font-bold' : 'text-slate-400'
-            }`}
-          >
-            <Sparkles className="w-5 h-5" />
-            <span>Tools</span>
-          </button>
+
 
           <button
             onClick={() => setActiveTab('collections')}
@@ -1050,12 +1156,57 @@ export default function App() {
       {/* PDF Import Modal */}
       <ImportModal
         isOpen={isImportOpen}
-        onClose={() => setIsImportOpen(false)}
+        onClose={() => {
+          setIsImportOpen(false);
+          setDraggedFiles([]);
+        }}
         onSuccess={() => {
+          setDraggedFiles([]);
           refreshVaultData();
         }}
         defaultCategory={importCategory}
+        initialFiles={draggedFiles}
       />
+
+      {/* Keyboard Shortcuts Cheatsheet Modal */}
+      <KeyboardShortcutsModal
+        isOpen={isShortcutsOpen}
+        onClose={() => setIsShortcutsOpen(false)}
+      />
+
+      {/* Full-Screen PDF Dropzone Overlay */}
+      {isDraggingOver && (
+        <div
+          onDragOver={e => e.preventDefault()}
+          onDrop={e => {
+            e.preventDefault();
+            setIsDraggingOver(false);
+            if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+              const files = Array.from(e.dataTransfer.files).filter(
+                f => f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf')
+              );
+              if (files.length > 0) {
+                setDraggedFiles(files);
+                setImportCategory('inbox');
+                setIsImportOpen(true);
+              }
+            }
+          }}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-[#070a12]/90 backdrop-blur-md p-6 pointer-events-auto animate-fadeIn"
+        >
+          <div className="w-full max-w-xl border-2 border-dashed border-sky-400 bg-sky-500/10 rounded-3xl p-10 flex flex-col items-center justify-center text-center space-y-4 shadow-2xl shadow-sky-500/20">
+            <div className="w-16 h-16 rounded-2xl bg-sky-500/20 border border-sky-400 text-sky-300 flex items-center justify-center animate-bounce">
+              <UploadCloud className="w-8 h-8" />
+            </div>
+            <div className="space-y-1.5">
+              <h3 className="text-xl font-bold text-white tracking-tight">Drop your PDFs here</h3>
+              <p className="text-xs sm:text-sm text-slate-300 max-w-sm mx-auto">
+                Release anywhere on the screen to immediately organize and import into your personal vault.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Backup and Restore Modal */}
       <BackupModal
@@ -1105,6 +1256,7 @@ export default function App() {
         onLibraryCleared={() => {
           refreshVaultData();
         }}
+        onOpenShortcuts={() => setIsShortcutsOpen(true)}
       />
 
       {/* Delete Confirmation Modal */}

@@ -105,4 +105,16 @@ export async function initializeDatabase(): Promise<void> {
       });
     }
   }
+
+  // Request browser storage persistence so IndexedDB data is never evicted on mobile/desktop
+  if (typeof navigator !== 'undefined' && navigator.storage && navigator.storage.persist) {
+    try {
+      const isPersisted = await navigator.storage.persisted();
+      if (!isPersisted) {
+        await navigator.storage.persist();
+      }
+    } catch {
+      // Ignore if user denies or browser environment restricts
+    }
+  }
 }

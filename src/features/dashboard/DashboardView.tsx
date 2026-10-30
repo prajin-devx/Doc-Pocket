@@ -17,11 +17,10 @@ import {
   CheckCircle2,
   Calendar,
   SlidersHorizontal,
-  FileImage,
-  Minimize2,
 } from 'lucide-react';
 import { CollectionItem, DashboardSectionId, DocumentItem } from '../../types';
 import { DocumentCard } from '../documents/DocumentCard';
+import { RecentDocumentsCarousel } from './RecentDocumentsCarousel';
 import { CategoryIcon } from '../../components/common/CategoryIcon';
 import { formatBytes } from '../../lib/storage-service';
 import { sampleVaultDocuments } from '../../lib/sample-documents';
@@ -36,7 +35,6 @@ interface DashboardViewProps {
   onOpenDocument: (doc: DocumentItem) => void;
   onOpenImport: (category?: string) => void;
   onNavigateToLibrary: (filter?: { category?: string; onlyFavorites?: boolean; onlyPinned?: boolean }) => void;
-  onNavigateToTools?: (initialTab?: 'image-to-pdf' | 'compressor') => void;
   onToggleFavorite: (id: string, e: React.MouseEvent) => void;
   onTogglePinned: (id: string, e: React.MouseEvent) => void;
   onDownload: (doc: DocumentItem, e: React.MouseEvent) => void;
@@ -57,7 +55,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onOpenDocument,
   onOpenImport,
   onNavigateToLibrary,
-  onNavigateToTools,
   onToggleFavorite,
   onTogglePinned,
   onDownload,
@@ -150,26 +147,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   <UploadCloud className="w-4 h-4" />
                   <span>Import PDFs</span>
                 </button>
-                {onNavigateToTools && (
-                  <>
-                    <button
-                      onClick={() => onNavigateToTools('image-to-pdf')}
-                      className="flex items-center gap-2 px-4 py-3 rounded-2xl bg-sky-500/10 hover:bg-sky-500/20 text-sky-300 border border-sky-500/30 font-medium text-xs sm:text-sm transition"
-                      title="Convert Images to PDF"
-                    >
-                      <FileImage className="w-4 h-4 text-sky-400" />
-                      <span>Image to PDF</span>
-                    </button>
-                    <button
-                      onClick={() => onNavigateToTools('compressor')}
-                      className="flex items-center gap-2 px-4 py-3 rounded-2xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-medium text-xs sm:text-sm transition"
-                      title="Compress PDF file size"
-                    >
-                      <Minimize2 className="w-4 h-4 text-emerald-400" />
-                      <span>Compress PDF</span>
-                    </button>
-                  </>
-                )}
                 <button
                   onClick={onOpenLayoutModal}
                   className="flex items-center gap-2 px-4 py-3 rounded-2xl bg-slate-900/80 hover:bg-slate-800 text-slate-200 border border-slate-700/80 font-medium text-xs sm:text-sm transition"
@@ -378,34 +355,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         );
 
       case 'recent_opened':
-        if (recentlyOpenedDocs.length === 0) return null;
         return (
-          <div key="recent_opened" className="space-y-3.5">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Clock className="w-4 h-4 text-sky-400" />
-                <h2 className="text-sm sm:text-base font-bold text-white">Recently Opened</h2>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              {recentlyOpenedDocs.map(doc => {
-                const col = collections.find(c => c.id === doc.category);
-                return (
-                  <DocumentCard
-                    key={doc.id}
-                    document={doc}
-                    collection={col}
-                    onOpen={onOpenDocument}
-                    onToggleFavorite={onToggleFavorite}
-                    onTogglePinned={onTogglePinned}
-                    onDownload={onDownload}
-                    onDelete={onDelete}
-                  />
-                );
-              })}
-            </div>
-          </div>
+          <RecentDocumentsCarousel
+            key="recent_opened"
+            documents={documents}
+            collections={collections}
+            onOpenDocument={onOpenDocument}
+            onToggleFavorite={onToggleFavorite}
+            onTogglePinned={onTogglePinned}
+            onDownload={onDownload}
+            onDelete={onDelete}
+            onNavigateToLibrary={() => onNavigateToLibrary()}
+            onOpenImport={() => onOpenImport()}
+          />
         );
 
       case 'recent_imports':

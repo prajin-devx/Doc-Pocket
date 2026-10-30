@@ -1,7 +1,7 @@
 import JSZip from 'jszip';
 import { db } from './database';
-import { DocumentItem, DocumentBinary } from '../types';
-import { inspectPDF } from './pdf-service';
+import { DocumentItem, DocumentBinary, PageBookmark } from '../types';
+import { inspectPDF, extractAllPDFText } from './pdf-service';
 
 export interface ImportResult {
   document: DocumentItem;
@@ -342,5 +342,133 @@ export const documentService = {
     a.click();
     document.body.removeChild(a);
     setTimeout(() => URL.revokeObjectURL(url), 10000);
+  },
+
+  /**
+   * Add a page bookmark with optional notes and color tag to a document
+   */
+  async addPageBookmark(
+    docId: string,
+    bookmarkData: Omit<PageBookmark, 'id' | 'createdAt'>
+  ): Promise<PageBookmark> {
+    const doc = await db.documents.get(docId);
+    if (!doc) throw new Error('Document not found');
+
+    const newBookmark: PageBookmark = {
+      id: `bm_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      pageNumber: bookmarkData.pageNumber,
+      title: bookmarkData.title.trim() || `Page ${bookmarkData.pageNumber}`,
+      note: bookmarkData.note?.trim() || undefined,
+      color: bookmarkData.color || '#38bdf8',
+      createdAt: Date.now(),
+    };
+
+    const currentBookmarks = doc.pageBookmarks || [];
+    const updatedBookmarks = [...currentBookmarks, newBookmark].sort(
+      (a, b) => a.pageNumber - b.pageNumber
+    );
+
+    await db.documents.update(docId, { pageBookmarks: updatedBookmarks });
+    return newBookmark;
+  },
+
+  /**
+   * Remove a page bookmark by ID
+   */
+  async deletePageBookmark(docId: string, bookmarkId: string): Promise<void> {
+    const doc = await db.documents.get(docId);
+    if (!doc) return;
+
+    const updated = (doc.pageBookmarks || []).filter(b => b.id !== bookmarkId);
+    await db.documents.update(docId, { pageBookmarks: updated });
+  },
+
+  /**
+   * Update a page bookmark's title, note, or color
+   */
+  async updatePageBookmark(
+    docId: string,
+    bookmarkId: string,
+    updates: Partial<Pick<PageBookmark, 'title' | 'note' | 'color'>>
+  ): Promise<void> {
+    const doc = await db.documents.get(docId);
+    if (!doc) return;
+
+    const updated = (doc.pageBookmarks || []).map(b => {
+      if (b.id === bookmarkId) {
+        return {
+          ...b,
+          title: updates.title !== undefined ? updates.title.trim() || b.title : b.title,
+          note: updates.note !== undefined ? updates.note.trim() : b.note,
+          color: updates.color !== undefined ? updates.color : b.color,
+        };
+      }
+      return b;
+    });
+
+    await db.documents.update(docId, { pageBookmarks: updated });
+  },
+
+  /**
+   * Extracts and caches text for a document to enable instant deep searching and reflow reading
+   */
+  async extractAndCacheDocumentText(docId: string): Promise<string> {
+    const doc = await db.documents.get(docId);
+    if (!doc) return '';
+
+    if (doc.extractedTextCache && doc.extractedTextCache.length > 0) {
+      return doc.extractedTextCache;
+    }
+
+    const binary = await this.getDocumentBinary(docId);
+    if (!binary) return '';
+
+    const { fullText } = await extractAllPDFText(binary, 30);
+    if (fullText) {
+      await db.documents.update(docId, { extractedTextCache: fullText });
+    }
+    return fullText;
+  },
+
+  /**
+   * Deep search inside stored PDF contents across the vault
+   */
+  async searchDocumentsDeep(
+    query: string,
+    docs: DocumentItem[]
+  ): Promise<{
+    doc: DocumentItem;
+    snippet: string;
+  }[]> {
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+
+    const results: { doc: DocumentItem; snippet: string }[] = [];
+
+    for (const doc of docs) {
+      let text = doc.extractedTextCache;
+      if (!text) {
+        text = await this.extractAndCacheDocumentText(doc.id);
+      }
+
+      if (text) {
+        const lowerText = text.toLowerCase();
+        const matchPos = lowerText.indexOf(q);
+        if (matchPos !== -1) {
+          const start = Math.max(0, matchPos - 45);
+          const end = Math.min(text.length, matchPos + q.length + 65);
+          let snippet = text.substring(start, end).replace(/\s+/g, ' ').trim();
+          if (start > 0) snippet = '...' + snippet;
+          if (end < text.length) snippet = snippet + '...';
+
+          results.push({
+            doc,
+            snippet,
+          });
+        }
+      }
+    }
+
+    return results;
   },
 };

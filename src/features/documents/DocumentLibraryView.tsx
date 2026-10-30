@@ -72,6 +72,37 @@ export const DocumentLibraryView: React.FC<DocumentLibraryViewProps> = ({
   const [onlyPinned, setOnlyPinned] = useState<boolean>(initialOnlyPinned);
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
 
+  // Deep Full-Text Search inside PDF contents
+  const [isDeepSearch, setIsDeepSearch] = useState<boolean>(false);
+  const [deepMatches, setDeepMatches] = useState<Map<string, string>>(new Map());
+  const [isDeepSearching, setIsDeepSearching] = useState<boolean>(false);
+
+  React.useEffect(() => {
+    let active = true;
+    if (isDeepSearch && searchQuery.trim().length >= 2) {
+      setIsDeepSearching(true);
+      const timer = setTimeout(async () => {
+        try {
+          const results = await documentService.searchDocumentsDeep(searchQuery, documents);
+          if (active) {
+            const map = new Map<string, string>();
+            results.forEach(r => map.set(r.doc.id, r.snippet));
+            setDeepMatches(map);
+          }
+        } finally {
+          if (active) setIsDeepSearching(false);
+        }
+      }, 300);
+      return () => {
+        active = false;
+        clearTimeout(timer);
+      };
+    } else {
+      setDeepMatches(new Map());
+      setIsDeepSearching(false);
+    }
+  }, [isDeepSearch, searchQuery, documents]);
+
   // Sorting
   const [sortField, setSortField] = useState<SortField>('importedAt');
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
@@ -150,7 +181,12 @@ export const DocumentLibraryView: React.FC<DocumentLibraryViewProps> = ({
           const matchFile = doc.fileName.toLowerCase().includes(q);
           const matchDesc = (doc.description || '').toLowerCase().includes(q);
           const matchTag = doc.tags?.some(t => t.toLowerCase().includes(q));
-          if (!matchTitle && !matchFile && !matchDesc && !matchTag) {
+          const matchDeep = isDeepSearch && deepMatches.has(doc.id);
+          const matchBookmark = doc.pageBookmarks?.some(
+            b => b.title.toLowerCase().includes(q) || (b.note && b.note.toLowerCase().includes(q))
+          );
+
+          if (!matchTitle && !matchFile && !matchDesc && !matchTag && !matchDeep && !matchBookmark) {
             return false;
           }
         }
@@ -419,24 +455,46 @@ export const DocumentLibraryView: React.FC<DocumentLibraryViewProps> = ({
 
       {/* Search & Sort Controls Bar */}
       <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
-        {/* Search */}
-        <div className="relative flex-1">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-          <input
-            type="text"
-            placeholder="Search by name, tags, or contents..."
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-            className="w-full pl-10 pr-9 py-2.5 rounded-xl bg-[#0c1220] border border-slate-800 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-sky-500 shadow-sm"
-          />
-          {searchQuery && (
-            <button
-              onClick={() => setSearchQuery('')}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          )}
+        {/* Search with Deep Search Toggle */}
+        <div className="flex items-center gap-2 flex-1">
+          <div className="relative flex-1">
+            <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              placeholder={
+                isDeepSearch
+                  ? 'Deep search text inside all stored PDF pages...'
+                  : 'Search by name, tags, or bookmarks...'
+              }
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              className="w-full pl-10 pr-9 py-2.5 rounded-xl bg-[#0c1220] border border-slate-800 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-sky-500 shadow-sm"
+            />
+            {isDeepSearching ? (
+              <Loader2 className="w-4 h-4 text-sky-400 animate-spin absolute right-3 top-1/2 -translate-y-1/2" />
+            ) : searchQuery ? (
+              <button
+                onClick={() => setSearchQuery('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            ) : null}
+          </div>
+
+          {/* Deep Content Search Toggle */}
+          <button
+            onClick={() => setIsDeepSearch(!isDeepSearch)}
+            className={`flex items-center gap-1.5 px-3 py-2.5 rounded-xl text-xs font-medium border transition shrink-0 ${
+              isDeepSearch
+                ? 'bg-sky-500/20 text-sky-300 border-sky-500/40 font-semibold shadow-sm'
+                : 'bg-[#0c1220] text-slate-400 border-slate-800 hover:text-slate-200'
+            }`}
+            title="Search inside the full text of all stored PDF files"
+          >
+            <Sparkles className={`w-3.5 h-3.5 ${isDeepSearch ? 'text-sky-400 fill-sky-400/20' : 'text-slate-500'}`} />
+            <span className="hidden sm:inline">Deep Search</span>
+          </button>
         </div>
 
         {/* Sort Controls */}
@@ -596,6 +654,7 @@ export const DocumentLibraryView: React.FC<DocumentLibraryViewProps> = ({
                     document={doc}
                     collection={col}
                     isSelected={selectedIds.has(doc.id)}
+                    matchedSnippet={deepMatches.get(doc.id)}
                     onOpen={isSelectionMode ? () => handleToggleSelectDoc(doc.id) : onOpenDocument}
                     onToggleFavorite={onToggleFavorite}
                     onTogglePinned={onTogglePinned}

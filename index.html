@@ -14,12 +14,35 @@
     <meta name="apple-mobile-web-app-title" content="DocPocket" />
     <link rel="icon" type="image/svg+xml" href="/icon.svg" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
     
     <!-- OpenGraph / Social -->
+    <meta property="og:site_name" content="DocPocket" />
     <meta property="og:title" content="DocPocket — Personal PDF Vault" />
-    <meta property="og:description" content="Fast, private personal PDF vault with on-device IndexedDB storage and offline backup." />
+    <meta property="og:description" content="Fast, private personal PDF vault with on-device IndexedDB storage and Google Drive cloud sync." />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="DocPocket — Personal PDF Vault" />
+    <meta name="twitter:description" content="Fast, private personal PDF vault with on-device IndexedDB storage and Google Drive cloud sync." />
+    <meta name="keywords" content="PDF vault, offline PDF viewer, personal document manager, college notes organizer, timetable PDF, student vault, IndexedDB PDF" />
+
+    <!-- Schema.org JSON-LD Structured Data -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "WebApplication",
+      "name": "DocPocket",
+      "applicationCategory": "UtilitiesApplication",
+      "operatingSystem": "All",
+      "browserRequirements": "Requires JavaScript. Requires HTML5 IndexedDB.",
+      "description": "DocPocket is a fast, offline-first personal PDF vault and document organizer with on-device IndexedDB storage, high-fidelity PDF reading, collections, and Google Drive sync.",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD"
+      }
+    }
+    </script>
 
     <!-- Typography -->
     <link rel="preconnect" href="https://fonts.googleapis.com">

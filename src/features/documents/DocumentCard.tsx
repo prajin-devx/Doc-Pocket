@@ -23,6 +23,7 @@ interface DocumentCardProps {
   onDelete: (doc: DocumentItem, e: React.MouseEvent) => void;
   isSelected?: boolean;
   onSelect?: (id: string) => void;
+  matchedSnippet?: string;
 }
 
 export const DocumentCard: React.FC<DocumentCardProps> = ({
@@ -35,6 +36,7 @@ export const DocumentCard: React.FC<DocumentCardProps> = ({
   onDelete,
   isSelected = false,
   onSelect,
+  matchedSnippet,
 }) => {
   const [showMenu, setShowMenu] = React.useState(false);
 
@@ -117,10 +119,19 @@ export const DocumentCard: React.FC<DocumentCardProps> = ({
           </div>
         </div>
 
-        {/* Page Count Badge */}
-        <div className="absolute bottom-2 left-2.5 flex items-center gap-1.5 text-[10px] font-mono text-slate-300 bg-black/60 backdrop-blur-md px-2 py-0.5 rounded-md border border-white/10">
-          <Layers className="w-3 h-3 text-sky-400" />
-          <span>{document.pageCount} {document.pageCount === 1 ? 'page' : 'pages'}</span>
+        {/* Page Count & Bookmarks Badge */}
+        <div className="absolute bottom-2 left-2.5 right-2.5 flex items-center justify-between pointer-events-none">
+          <div className="flex items-center gap-1.5 text-[10px] font-mono text-slate-300 bg-black/60 backdrop-blur-md px-2 py-0.5 rounded-md border border-white/10">
+            <Layers className="w-3 h-3 text-sky-400" />
+            <span>{document.pageCount} {document.pageCount === 1 ? 'page' : 'pages'}</span>
+          </div>
+
+          {document.pageBookmarks && document.pageBookmarks.length > 0 && (
+            <div className="flex items-center gap-1 text-[10px] font-mono text-amber-300 bg-black/70 backdrop-blur-md px-2 py-0.5 rounded-md border border-amber-500/30 shadow-sm">
+              <Bookmark className="w-2.5 h-2.5 fill-amber-400 text-amber-400" />
+              <span>{document.pageBookmarks.length} {document.pageBookmarks.length === 1 ? 'note' : 'notes'}</span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -142,6 +153,14 @@ export const DocumentCard: React.FC<DocumentCardProps> = ({
             <p className="text-[11px] text-slate-400 line-clamp-1 mt-1.5">
               {document.description}
             </p>
+          )}
+
+          {/* Deep Content Search Match Snippet */}
+          {matchedSnippet && (
+            <div className="mt-2 p-2 rounded-xl bg-sky-500/10 border border-sky-500/25 text-[10px] text-sky-200 line-clamp-2">
+              <span className="font-semibold text-sky-400">Content Match: </span>
+              <span className="italic">"{matchedSnippet}"</span>
+            </div>
           )}
 
           {/* Tags */}

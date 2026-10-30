@@ -1,3 +1,21 @@
+export interface PageBookmark {
+  id: string;
+  pageNumber: number;
+  title: string;
+  note?: string;
+  createdAt: number;
+  color?: string; // e.g. '#38bdf8', '#10b981', '#f59e0b', '#ec4899', '#a855f7'
+}
+
+export type ReaderFilterTone = 'normal' | 'invert' | 'sepia' | 'contrast';
+
+export interface ReaderTypographyConfig {
+  fontSize: number; // in px, e.g. 16
+  fontFamily: 'sans' | 'serif' | 'mono';
+  theme: 'day' | 'sepia' | 'slate' | 'oled';
+  lineHeight: 'normal' | 'relaxed' | 'loose';
+}
+
 export interface DocumentItem {
   id: string;
   fileName: string;
@@ -15,6 +33,8 @@ export interface DocumentItem {
   fileHash?: string;
   isPasswordProtected?: boolean;
   version?: number;
+  pageBookmarks?: PageBookmark[];
+  extractedTextCache?: string;
 }
 
 export interface DocumentBinary {
@@ -62,6 +82,8 @@ export interface AppSettings {
   accentColor: string;
   dashboardSectionOrder: DashboardSectionId[];
   hiddenDashboardSections: DashboardSectionId[];
+  autoSyncEnabled: boolean;
+  lastDriveSyncAt?: number;
 }
 
 export interface BackupManifest {

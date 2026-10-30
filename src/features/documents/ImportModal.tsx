@@ -24,6 +24,7 @@ interface ImportModalProps {
   onClose: () => void;
   onSuccess: () => void;
   defaultCategory?: string;
+  initialFiles?: File[];
 }
 
 export const ImportModal: React.FC<ImportModalProps> = ({
@@ -31,6 +32,7 @@ export const ImportModal: React.FC<ImportModalProps> = ({
   onClose,
   onSuccess,
   defaultCategory = 'inbox',
+  initialFiles,
 }) => {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [collections, setCollections] = useState<CollectionItem[]>([]);
@@ -57,7 +59,7 @@ export const ImportModal: React.FC<ImportModalProps> = ({
   useEffect(() => {
     if (isOpen) {
       setSelectedCategory(defaultCategory);
-      setSelectedFiles([]);
+      setSelectedFiles(initialFiles && initialFiles.length > 0 ? initialFiles : []);
       setTags([]);
       setDescription('');
       setImportSummary(null);

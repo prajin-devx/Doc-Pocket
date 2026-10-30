@@ -397,14 +397,18 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                   </div>
 
                   {/* Vault Status Box */}
-                  <div className="p-4 rounded-xl bg-slate-900/40 border border-slate-800/80 space-y-2">
+                  <div className="p-4 rounded-xl bg-slate-900/40 border border-slate-800/80 space-y-2.5">
                     <div className="flex items-center justify-between text-xs">
-                      <span className="text-slate-400">Target Drive Folder:</span>
+                      <span className="text-slate-400">Target Drive Vault:</span>
                       <span className="font-mono text-sky-400 font-medium">DocPocket Vault</span>
+                    </div>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-slate-400">Auto-Backup on Login:</span>
+                      <span className="font-mono text-emerald-400 font-medium">Active (Automatic)</span>
                     </div>
                     {vaultInfo && (
                       <div className="flex items-center justify-between text-xs">
-                        <span className="text-slate-400">Items in Google Drive:</span>
+                        <span className="text-slate-400">Organized PDF Files in Drive:</span>
                         <span className="font-mono text-slate-200">{vaultInfo.fileCount} files</span>
                       </div>
                     )}
@@ -416,6 +420,12 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                         </span>
                       </div>
                     )}
+                    <div className="pt-1.5 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-400">
+                      <span>Organized Subfolders:</span>
+                      <span className="font-mono text-[10px] text-sky-300">
+                        Timetables • College • Certificates • Projects • Personal • Subjects
+                      </span>
+                    </div>
                   </div>
 
                   {/* Action Progress */}
