@@ -10,6 +10,7 @@ import {
   Loader2,
   FilePlus2,
   AlertTriangle,
+  Presentation,
 } from 'lucide-react';
 import { CollectionItem } from '../../types';
 import { documentService } from '../../lib/document-service';
@@ -75,23 +76,32 @@ export const ImportModal: React.FC<ImportModalProps> = ({
   const handleFilesSelected = (fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return;
 
-    const pdfFiles: File[] = [];
-    const nonPdfNames: string[] = [];
+    const validFiles: File[] = [];
+    const unsupportedNames: string[] = [];
+    const validExtensions = ['.pdf', '.docx', '.doc', '.pptx', '.ppt'];
 
     Array.from(fileList).forEach(file => {
-      if (file.name.toLowerCase().endsWith('.pdf') || file.type === 'application/pdf') {
-        pdfFiles.push(file);
+      const lower = file.name.toLowerCase();
+      const isMatch = validExtensions.some(ext => lower.endsWith(ext));
+      if (
+        isMatch ||
+        file.type.includes('pdf') ||
+        file.type.includes('word') ||
+        file.type.includes('presentation') ||
+        file.type.includes('officedocument')
+      ) {
+        validFiles.push(file);
       } else {
-        nonPdfNames.push(file.name);
+        unsupportedNames.push(file.name);
       }
     });
 
-    if (nonPdfNames.length > 0) {
-      alert(`Only PDF files are supported. Skipped: ${nonPdfNames.slice(0, 3).join(', ')}${nonPdfNames.length > 3 ? '...' : ''}`);
+    if (unsupportedNames.length > 0) {
+      alert(`Only PDF, PowerPoint (.pptx, .ppt), and Word (.docx, .doc) files are supported. Skipped: ${unsupportedNames.slice(0, 3).join(', ')}${unsupportedNames.length > 3 ? '...' : ''}`);
     }
 
-    if (pdfFiles.length > 0) {
-      setSelectedFiles(prev => [...prev, ...pdfFiles]);
+    if (validFiles.length > 0) {
+      setSelectedFiles(prev => [...prev, ...validFiles]);
     }
   };
 
@@ -270,7 +280,7 @@ export const ImportModal: React.FC<ImportModalProps> = ({
                   ref={fileInputRef}
                   type="file"
                   multiple
-                  accept=".pdf,application/pdf"
+                  accept=".pdf,.docx,.doc,.pptx,.ppt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.ms-powerpoint"
                   className="hidden"
                   onChange={e => handleFilesSelected(e.target.files)}
                 />
@@ -280,10 +290,10 @@ export const ImportModal: React.FC<ImportModalProps> = ({
                   </span>
                   <div>
                     <p className="text-sm font-medium text-white">
-                      Click to choose PDFs or drag and drop
+                      Click to choose PDF, PowerPoint, or Word documents or drag and drop
                     </p>
                     <p className="text-xs text-slate-400 mt-1">
-                      Supports multiple file selection • Stored securely on your device
+                      Supports PDF, PPTX, PPT, DOCX, DOC • Encrypted on-device & Google Drive ready
                     </p>
                   </div>
                 </div>
@@ -305,27 +315,48 @@ export const ImportModal: React.FC<ImportModalProps> = ({
                     </button>
                   </div>
                   <div className="max-h-36 overflow-y-auto space-y-1.5 pr-1">
-                    {selectedFiles.map((file, idx) => (
-                      <div
-                        key={idx}
-                        className="flex items-center justify-between p-2 rounded-xl bg-slate-900/60 border border-slate-800 text-xs"
-                      >
-                        <div className="flex items-center gap-2 overflow-hidden">
-                          <FileText className="w-4 h-4 text-sky-400 shrink-0" />
-                          <span className="text-slate-200 truncate font-medium">{file.name}</span>
-                          <span className="text-[11px] font-mono text-slate-500 shrink-0">
-                            {formatBytes(file.size)}
-                          </span>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => removeFile(idx)}
-                          className="text-slate-400 hover:text-rose-400 p-1"
+                    {selectedFiles.map((file, idx) => {
+                      const lower = file.name.toLowerCase();
+                      const isPpt = lower.endsWith('.pptx') || lower.endsWith('.ppt');
+                      const isWord = lower.endsWith('.docx') || lower.endsWith('.doc');
+
+                      return (
+                        <div
+                          key={idx}
+                          className="flex items-center justify-between p-2 rounded-xl bg-slate-900/60 border border-slate-800 text-xs"
                         >
-                          <X className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    ))}
+                          <div className="flex items-center gap-2 overflow-hidden">
+                            {isPpt ? (
+                              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-orange-500/20 text-orange-400 border border-orange-500/30 flex items-center gap-1 shrink-0">
+                                <Presentation className="w-3 h-3" />
+                                <span>PPT</span>
+                              </span>
+                            ) : isWord ? (
+                              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-500/20 text-blue-400 border border-blue-500/30 flex items-center gap-1 shrink-0">
+                                <FileText className="w-3 h-3" />
+                                <span>DOC</span>
+                              </span>
+                            ) : (
+                              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center gap-1 shrink-0">
+                                <FileText className="w-3 h-3" />
+                                <span>PDF</span>
+                              </span>
+                            )}
+                            <span className="text-slate-200 truncate font-medium">{file.name}</span>
+                            <span className="text-[11px] font-mono text-slate-500 shrink-0">
+                              {formatBytes(file.size)}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => removeFile(idx)}
+                            className="text-slate-400 hover:text-rose-400 p-1"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               )}

@@ -13,10 +13,13 @@ import {
   Sparkles,
   ArrowRight,
   FolderOpen,
+  Highlighter,
+  Presentation,
 } from 'lucide-react';
 import { CollectionItem, DocumentItem } from '../../types';
 import { CategoryIcon } from '../../components/common/CategoryIcon';
 import { formatBytes } from '../../lib/storage-service';
+import { getDocumentFormat } from '../../lib/office-service';
 
 interface RecentDocumentsCarouselProps {
   documents: DocumentItem[];
@@ -349,6 +352,10 @@ export const RecentDocumentsCarousel: React.FC<RecentDocumentsCarouselProps> = (
           >
             {filteredDocs.map((doc) => {
               const col = collections.find((c) => c.id === doc.category);
+              const format = doc.format || getDocumentFormat(doc.fileName);
+              const isPpt = format === 'pptx' || format === 'ppt';
+              const isWord = format === 'docx' || format === 'doc';
+
               const relativeTime = doc.lastOpenedAt
                 ? `Opened ${formatRelativeTime(doc.lastOpenedAt)}`
                 : `Added ${formatRelativeTime(doc.importedAt)}`;
@@ -370,16 +377,26 @@ export const RecentDocumentsCarousel: React.FC<RecentDocumentsCarouselProps> = (
                         className="w-full h-full object-cover object-top transition-transform duration-500 group-hover:scale-105"
                         loading="lazy"
                       />
+                    ) : isPpt ? (
+                      <div className="flex flex-col items-center gap-2 text-slate-500 group-hover:text-orange-400 transition-colors p-4 w-full">
+                        <div className="w-12 h-12 rounded-xl bg-orange-950/30 border border-orange-500/30 flex items-center justify-center shadow-inner">
+                          <Presentation className="w-6 h-6 text-orange-400" />
+                        </div>
+                        <span className="text-[10px] font-mono tracking-wider uppercase text-orange-400">PowerPoint</span>
+                      </div>
+                    ) : isWord ? (
+                      <div className="flex flex-col items-center gap-2 text-slate-500 group-hover:text-blue-400 transition-colors p-4 w-full">
+                        <div className="w-12 h-12 rounded-xl bg-blue-950/30 border border-blue-500/30 flex items-center justify-center shadow-inner">
+                          <FileText className="w-6 h-6 text-blue-400" />
+                        </div>
+                        <span className="text-[10px] font-mono tracking-wider uppercase text-blue-400">Word Document</span>
+                      </div>
                     ) : (
                       <div className="flex flex-col items-center gap-2 text-slate-500 group-hover:text-sky-400 transition-colors p-4 w-full">
                         <div className="w-12 h-12 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-center shadow-inner">
                           <FileText className="w-6 h-6 text-sky-400" />
                         </div>
-                        <div className="w-3/4 space-y-1 opacity-40">
-                          <div className="h-1.5 bg-slate-700 rounded-full w-full" />
-                          <div className="h-1.5 bg-slate-700 rounded-full w-5/6" />
-                          <div className="h-1.5 bg-slate-700 rounded-full w-2/3" />
-                        </div>
+                        <span className="text-[10px] font-mono tracking-wider uppercase text-slate-400">PDF Document</span>
                       </div>
                     )}
 
@@ -388,24 +405,40 @@ export const RecentDocumentsCarousel: React.FC<RecentDocumentsCarouselProps> = (
 
                     {/* Top overlay badges: Collection & Quick Pins */}
                     <div className="absolute top-2.5 left-2.5 right-2.5 flex items-center justify-between pointer-events-auto">
-                      {col ? (
-                        <span
-                          className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium backdrop-blur-md border shadow-sm"
-                          style={{
-                            backgroundColor: `${col.color}25`,
-                            color: col.color,
-                            borderColor: `${col.color}40`,
-                          }}
-                        >
-                          <CategoryIcon icon={col.icon} className="w-3 h-3" />
-                          <span className="truncate max-w-[90px]">{col.name}</span>
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-900/85 text-slate-300 border border-slate-700/80 backdrop-blur-md">
-                          <FolderOpen className="w-3 h-3 text-sky-400" />
-                          <span>Vault</span>
-                        </span>
-                      )}
+                      <div className="flex items-center gap-1.5">
+                        {isPpt ? (
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-bold bg-orange-500/25 text-orange-400 border border-orange-500/30 backdrop-blur-md shadow-sm">
+                            PPT
+                          </span>
+                        ) : isWord ? (
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-bold bg-blue-500/25 text-blue-400 border border-blue-500/30 backdrop-blur-md shadow-sm">
+                            DOC
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-bold bg-rose-500/25 text-rose-400 border border-rose-500/30 backdrop-blur-md shadow-sm">
+                            PDF
+                          </span>
+                        )}
+
+                        {col ? (
+                          <span
+                            className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium backdrop-blur-md border shadow-sm"
+                            style={{
+                              backgroundColor: `${col.color}25`,
+                              color: col.color,
+                              borderColor: `${col.color}40`,
+                            }}
+                          >
+                            <CategoryIcon icon={col.icon} className="w-3 h-3" />
+                            <span className="truncate max-w-[85px]">{col.name}</span>
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-900/85 text-slate-300 border border-slate-700/80 backdrop-blur-md">
+                            <FolderOpen className="w-3 h-3 text-sky-400" />
+                            <span>Vault</span>
+                          </span>
+                        )}
+                      </div>
 
                       {/* Favorite & Pin buttons */}
                       <div className="flex items-center gap-1">
@@ -437,20 +470,50 @@ export const RecentDocumentsCarousel: React.FC<RecentDocumentsCarouselProps> = (
                     {/* Bottom overlay: Pages & Bookmarks notes */}
                     <div className="absolute bottom-2 left-2.5 right-2.5 flex items-center justify-between pointer-events-none">
                       <div className="flex items-center gap-1.5 text-[10px] font-mono text-slate-200 bg-black/70 backdrop-blur-md px-2 py-0.5 rounded-md border border-white/10">
-                        <Layers className="w-3 h-3 text-sky-400" />
-                        <span>
-                          {doc.pageCount} {doc.pageCount === 1 ? 'page' : 'pages'}
-                        </span>
+                        {isPpt ? (
+                          <>
+                            <Presentation className="w-3 h-3 text-orange-400" />
+                            <span>
+                              {doc.slideCount || doc.pageCount} {(doc.slideCount || doc.pageCount) === 1 ? 'slide' : 'slides'}
+                            </span>
+                          </>
+                        ) : isWord ? (
+                          <>
+                            <FileText className="w-3 h-3 text-blue-400" />
+                            <span>
+                              {doc.wordCount ? `${doc.wordCount.toLocaleString()} words` : `${doc.pageCount} pages`}
+                            </span>
+                          </>
+                        ) : (
+                          <>
+                            <Layers className="w-3 h-3 text-sky-400" />
+                            <span>
+                              {doc.pageCount} {doc.pageCount === 1 ? 'page' : 'pages'}
+                            </span>
+                          </>
+                        )}
                       </div>
 
-                      {doc.pageBookmarks && doc.pageBookmarks.length > 0 && (
-                        <div className="flex items-center gap-1 text-[10px] font-mono text-amber-300 bg-black/80 backdrop-blur-md px-2 py-0.5 rounded-md border border-amber-500/30">
-                          <Bookmark className="w-2.5 h-2.5 fill-amber-400 text-amber-400" />
-                          <span>
-                            {doc.pageBookmarks.length} {doc.pageBookmarks.length === 1 ? 'note' : 'notes'}
-                          </span>
-                        </div>
-                      )}
+                      <div className="flex items-center gap-1.5">
+                        {doc.highlights && doc.highlights.length > 0 && (
+                          <div
+                            className="flex items-center gap-1 text-[10px] font-mono text-yellow-300 bg-black/80 backdrop-blur-md px-2 py-0.5 rounded-md border border-yellow-500/30 shadow-sm"
+                            title={`${doc.highlights.length} saved text highlights`}
+                          >
+                            <Highlighter className="w-2.5 h-2.5 text-yellow-400" />
+                            <span>{doc.highlights.length}</span>
+                          </div>
+                        )}
+
+                        {doc.pageBookmarks && doc.pageBookmarks.length > 0 && (
+                          <div className="flex items-center gap-1 text-[10px] font-mono text-amber-300 bg-black/80 backdrop-blur-md px-2 py-0.5 rounded-md border border-amber-500/30">
+                            <Bookmark className="w-2.5 h-2.5 fill-amber-400 text-amber-400" />
+                            <span>
+                              {doc.pageBookmarks.length} {doc.pageBookmarks.length === 1 ? 'note' : 'notes'}
+                            </span>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
 

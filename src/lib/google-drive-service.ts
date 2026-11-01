@@ -7,6 +7,7 @@ import {
   DocumentItem,
   GoogleDriveVaultInfo,
 } from '../types';
+import { getDocumentFormat, getDocumentMimeType } from './office-service';
 
 const DRIVE_API_BASE = 'https://www.googleapis.com/drive/v3';
 const DRIVE_UPLOAD_BASE = 'https://www.googleapis.com/upload/drive/v3';
@@ -222,13 +223,14 @@ class GoogleDriveService {
 
       const files = await this.listAllVaultFiles();
       const manifestFile = files.find(f => f.name === 'vault-manifest.json');
-      const pdfFiles = files.filter(f => f.name.endsWith('.pdf'));
+      const supportedExtensions = ['.pdf', '.docx', '.doc', '.pptx', '.ppt'];
+      const docFiles = files.filter(f => supportedExtensions.some(ext => f.name.toLowerCase().endsWith(ext)));
 
       return {
         folderId,
         folderUrl: `https://drive.google.com/drive/folders/${folderId}`,
         manifestFileId: manifestFile?.id,
-        fileCount: pdfFiles.length,
+        fileCount: docFiles.length,
         lastSyncTime: manifestFile?.modifiedTime ? new Date(manifestFile.modifiedTime).getTime() : undefined,
       };
     } catch (err) {
@@ -262,24 +264,25 @@ class GoogleDriveService {
   }
 
   /**
-   * Upload or update a PDF document file to its organized category subfolder in Google Drive
+   * Upload or update a document file (PDF, PPTX, DOCX, etc.) to its organized category subfolder in Google Drive
    */
-  async uploadDocument(docItem: DocumentItem, pdfBinary: ArrayBuffer): Promise<string> {
+  async uploadDocument(docItem: DocumentItem, docBinary: ArrayBuffer): Promise<string> {
     const token = await this.requireToken();
 
     // Determine target organized folder (e.g. Timetables, College, Certificates)
     const targetFolderId = await this.getOrCreateCategoryFolder(docItem.category || 'inbox');
 
     const existingFiles = await this.listAllVaultFiles();
-    const cleanDocFileName = docItem.displayName.toLowerCase().endsWith('.pdf')
-      ? docItem.displayName
-      : `${docItem.displayName}.pdf`;
+    const format = docItem.format || getDocumentFormat(docItem.fileName);
+    const mimeType = docItem.mimeType || getDocumentMimeType(docItem.fileName, format);
+    const cleanDocFileName = docItem.fileName || docItem.displayName;
 
     const existingFile = existingFiles.find(
       f =>
         f.appProperties?.docPocketId === docItem.id ||
         f.name === cleanDocFileName ||
-        f.name === `${docItem.id}.pdf`
+        f.name === docItem.fileName ||
+        f.name.startsWith(docItem.id)
     );
 
     if (existingFile) {
@@ -289,13 +292,13 @@ class GoogleDriveService {
         method: 'PATCH',
         headers: {
           Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/pdf',
+          'Content-Type': mimeType,
         },
-        body: pdfBinary,
+        body: docBinary,
       });
 
       if (!updateRes.ok) {
-        throw new Error(`Failed to update PDF in Google Drive: ${await updateRes.text()}`);
+        throw new Error(`Failed to update document in Google Drive: ${await updateRes.text()}`);
       }
       return existingFile.id;
     }
@@ -308,22 +311,23 @@ class GoogleDriveService {
     const metadata = {
       name: cleanDocFileName,
       parents: [targetFolderId],
-      mimeType: 'application/pdf',
+      mimeType,
       description: docItem.description || `DocPocket Vault: ${docItem.displayName}`,
       appProperties: {
         docPocketVault: 'true',
         docPocketId: docItem.id,
         fileHash: docItem.fileHash || '',
         category: docItem.category,
+        format: format || 'pdf',
       },
     };
 
     const metadataPart = `${delimiter}Content-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}`;
-    const mediaHeader = `${delimiter}Content-Type: application/pdf\r\n\r\n`;
+    const mediaHeader = `${delimiter}Content-Type: ${mimeType}\r\n\r\n`;
 
     const enc = new TextEncoder();
     const multipartBody = new Blob(
-      [enc.encode(metadataPart), enc.encode(mediaHeader), pdfBinary, enc.encode(closeDelimiter)],
+      [enc.encode(metadataPart), enc.encode(mediaHeader), docBinary, enc.encode(closeDelimiter)],
       { type: `multipart/related; boundary=${boundary}` }
     );
 
@@ -337,7 +341,7 @@ class GoogleDriveService {
 
     if (!uploadRes.ok) {
       const err = await uploadRes.text();
-      throw new Error(`Failed to upload PDF to Google Drive: ${err}`);
+      throw new Error(`Failed to upload document to Google Drive: ${err}`);
     }
 
     const result = await uploadRes.json();
@@ -530,15 +534,14 @@ class GoogleDriveService {
         await db.documents.put(doc);
 
         // Find binary file in Drive
-        const cleanName = doc.displayName.toLowerCase().endsWith('.pdf')
-          ? doc.displayName
-          : `${doc.displayName}.pdf`;
+        const cleanName = doc.fileName || doc.displayName;
 
         const match = driveFiles.find(
           f =>
             f.appProperties?.docPocketId === doc.id ||
             f.name === cleanName ||
-            f.name === `${doc.id}.pdf`
+            f.name === doc.fileName ||
+            f.name.startsWith(doc.id)
         );
 
         if (match) {

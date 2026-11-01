@@ -1182,8 +1182,13 @@ export default function App() {
             e.preventDefault();
             setIsDraggingOver(false);
             if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+              const validExtensions = ['.pdf', '.docx', '.doc', '.pptx', '.ppt'];
               const files = Array.from(e.dataTransfer.files).filter(
-                f => f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf')
+                f =>
+                  validExtensions.some(ext => f.name.toLowerCase().endsWith(ext)) ||
+                  f.type.includes('pdf') ||
+                  f.type.includes('word') ||
+                  f.type.includes('presentation')
               );
               if (files.length > 0) {
                 setDraggedFiles(files);
@@ -1199,9 +1204,9 @@ export default function App() {
               <UploadCloud className="w-8 h-8" />
             </div>
             <div className="space-y-1.5">
-              <h3 className="text-xl font-bold text-white tracking-tight">Drop your PDFs here</h3>
+              <h3 className="text-xl font-bold text-white tracking-tight">Drop your documents here</h3>
               <p className="text-xs sm:text-sm text-slate-300 max-w-sm mx-auto">
-                Release anywhere on the screen to immediately organize and import into your personal vault.
+                Release anywhere on the screen to import PDF, PowerPoint (.pptx, .ppt), or Word (.docx, .doc) files into your personal vault.
               </p>
             </div>
           </div>

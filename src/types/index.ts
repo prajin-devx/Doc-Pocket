@@ -16,6 +16,33 @@ export interface ReaderTypographyConfig {
   lineHeight: 'normal' | 'relaxed' | 'loose';
 }
 
+export interface HighlightRect {
+  x: number; // percentage (0-100) relative to page width
+  y: number; // percentage (0-100) relative to page height
+  width: number; // percentage (0-100)
+  height: number; // percentage (0-100)
+}
+
+export interface DocumentHighlight {
+  id: string;
+  pageNumber: number;
+  text: string;
+  color: string; // e.g. '#fef08a', '#a7f3d0', '#bae6fd', '#fbcfe8', '#fed7aa'
+  createdAt: number;
+  note?: string;
+  rects?: HighlightRect[];
+}
+
+export type DocumentFormat = 'pdf' | 'docx' | 'pptx' | 'doc' | 'ppt';
+
+export interface SlideItem {
+  slideNumber: number;
+  title: string;
+  bullets: string[];
+  notes?: string;
+  rawText: string;
+}
+
 export interface DocumentItem {
   id: string;
   fileName: string;
@@ -34,7 +61,14 @@ export interface DocumentItem {
   isPasswordProtected?: boolean;
   version?: number;
   pageBookmarks?: PageBookmark[];
+  highlights?: DocumentHighlight[];
   extractedTextCache?: string;
+  format?: DocumentFormat;
+  mimeType?: string;
+  wordCount?: number;
+  slideCount?: number;
+  slides?: SlideItem[];
+  docxHtml?: string;
 }
 
 export interface DocumentBinary {

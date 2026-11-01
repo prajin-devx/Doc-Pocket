@@ -88,7 +88,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     setIsSeeding(true);
     try {
       for (const sample of sampleVaultDocuments) {
-        const buffer = sample.generateBuffer();
+        const buffer = await Promise.resolve(sample.generateBuffer());
         await documentService.importArrayBuffer(
           buffer,
           sample.fileName,

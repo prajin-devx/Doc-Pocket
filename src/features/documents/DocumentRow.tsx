@@ -7,10 +7,13 @@ import {
   Trash2,
   ExternalLink,
   Layers,
+  Presentation,
+  Highlighter,
 } from 'lucide-react';
 import { CollectionItem, DocumentItem } from '../../types';
 import { formatBytes } from '../../lib/storage-service';
 import { CategoryIcon } from '../../components/common/CategoryIcon';
+import { getDocumentFormat } from '../../lib/office-service';
 
 interface DocumentRowProps {
   document: DocumentItem;
@@ -31,6 +34,10 @@ export const DocumentRow: React.FC<DocumentRowProps> = ({
   onDownload,
   onDelete,
 }) => {
+  const format = document.format || getDocumentFormat(document.fileName);
+  const isPpt = format === 'pptx' || format === 'ppt';
+  const isWord = format === 'docx' || format === 'doc';
+
   return (
     <div
       onClick={() => onOpen(document)}
@@ -46,6 +53,10 @@ export const DocumentRow: React.FC<DocumentRowProps> = ({
               className="w-full h-full object-cover"
               loading="lazy"
             />
+          ) : isPpt ? (
+            <Presentation className="w-5 h-5 text-orange-400" />
+          ) : isWord ? (
+            <FileText className="w-5 h-5 text-blue-400" />
           ) : (
             <FileText className="w-5 h-5 text-sky-400/80" />
           )}
@@ -53,9 +64,24 @@ export const DocumentRow: React.FC<DocumentRowProps> = ({
 
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
+            {isPpt ? (
+              <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-orange-500/20 text-orange-400 border border-orange-500/30 shrink-0">
+                PPT
+              </span>
+            ) : isWord ? (
+              <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-blue-500/20 text-blue-400 border border-blue-500/30 shrink-0">
+                DOC
+              </span>
+            ) : (
+              <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30 shrink-0">
+                PDF
+              </span>
+            )}
+
             <h3 className="text-xs sm:text-sm font-semibold text-white group-hover:text-sky-300 transition-colors truncate">
               {document.displayName}
             </h3>
+
             {collection && (
               <span
                 className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border"
@@ -79,9 +105,32 @@ export const DocumentRow: React.FC<DocumentRowProps> = ({
             <span className="font-mono">{formatBytes(document.fileSize)}</span>
             <span>•</span>
             <span className="font-mono flex items-center gap-0.5">
-              <Layers className="w-3 h-3 text-sky-400" />
-              {document.pageCount}p
+              {isPpt ? (
+                <>
+                  <Presentation className="w-3 h-3 text-orange-400" />
+                  <span>{document.slideCount || document.pageCount} slides</span>
+                </>
+              ) : isWord ? (
+                <>
+                  <FileText className="w-3 h-3 text-blue-400" />
+                  <span>{document.wordCount ? `${document.wordCount}w` : `${document.pageCount}p`}</span>
+                </>
+              ) : (
+                <>
+                  <Layers className="w-3 h-3 text-sky-400" />
+                  <span>{document.pageCount}p</span>
+                </>
+              )}
             </span>
+            {document.highlights && document.highlights.length > 0 && (
+              <>
+                <span>•</span>
+                <span className="font-mono text-yellow-300 flex items-center gap-1 bg-yellow-500/10 px-1.5 py-0.2 rounded border border-yellow-500/20">
+                  <Highlighter className="w-2.5 h-2.5 text-yellow-400" />
+                  <span>{document.highlights.length}</span>
+                </span>
+              </>
+            )}
             {document.pageBookmarks && document.pageBookmarks.length > 0 && (
               <>
                 <span>•</span>

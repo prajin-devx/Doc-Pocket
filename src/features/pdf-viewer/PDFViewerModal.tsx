@@ -43,11 +43,22 @@ import {
   Trash2,
   Edit3,
   Palette,
+  Highlighter,
+  MessageSquare,
+  Sparkles,
 } from 'lucide-react';
-import { CollectionItem, DocumentItem, PageBookmark, ReaderFilterTone } from '../../types';
+import {
+  CollectionItem,
+  DocumentItem,
+  PageBookmark,
+  ReaderFilterTone,
+  DocumentHighlight,
+  HighlightRect,
+} from '../../types';
 import { documentService } from '../../lib/document-service';
 import { collectionService } from '../../lib/collection-service';
 import { formatBytes } from '../../lib/storage-service';
+import { OfficeViewer } from './OfficeViewer';
 
 interface PDFViewerModalProps {
   documentId: string | null;
@@ -59,6 +70,14 @@ interface SearchMatch {
   pageNumber: number;
   matchIndex: number;
 }
+
+const HIGHLIGHT_COLORS = [
+  { id: 'yellow', label: 'Yellow', hex: '#fef08a', name: 'Yellow' },
+  { id: 'green', label: 'Green', hex: '#a7f3d0', name: 'Emerald' },
+  { id: 'sky', label: 'Blue', hex: '#bae6fd', name: 'Sky Blue' },
+  { id: 'pink', label: 'Pink', hex: '#fbcfe8', name: 'Pink' },
+  { id: 'orange', label: 'Orange', hex: '#fed7aa', name: 'Orange' },
+];
 
 export const PDFViewerModal: React.FC<PDFViewerModalProps> = ({
   documentId,
@@ -120,15 +139,37 @@ export const PDFViewerModal: React.FC<PDFViewerModalProps> = ({
   const [isSpeechPaused, setIsSpeechPaused] = useState<boolean>(false);
   const [speechRate, setSpeechRate] = useState<number>(1);
 
-  // Sidebar Tab: 'thumbnails' | 'bookmarks'
-  const [sidebarTab, setSidebarTab] = useState<'thumbnails' | 'bookmarks'>('thumbnails');
+  // Sidebar Tab: 'thumbnails' | 'bookmarks' | 'highlights'
+  const [sidebarTab, setSidebarTab] = useState<'thumbnails' | 'bookmarks' | 'highlights'>('thumbnails');
   const [isAddingBookmark, setIsAddingBookmark] = useState<boolean>(false);
   const [bookmarkTitle, setBookmarkTitle] = useState<string>('');
   const [bookmarkNote, setBookmarkNote] = useState<string>('');
   const [bookmarkColor, setBookmarkColor] = useState<string>('#38bdf8');
   const [isSavingBookmark, setIsSavingBookmark] = useState<boolean>(false);
 
+  // Persistent Text Highlights State
+  const [selectionPopup, setSelectionPopup] = useState<{
+    x: number;
+    y: number;
+    text: string;
+    rects: HighlightRect[];
+  } | null>(null);
+  const [selectedHighlightForPopover, setSelectedHighlightForPopover] = useState<DocumentHighlight | null>(null);
+  const [activeHighlightColor, setActiveHighlightColor] = useState<string>('#fef08a');
+  const [showNoteInputInPopup, setShowNoteInputInPopup] = useState<boolean>(false);
+  const [popupNoteText, setPopupNoteText] = useState<string>('');
+  const [isSavingHighlight, setIsSavingHighlight] = useState<boolean>(false);
+  const [copiedHighlights, setCopiedHighlights] = useState<boolean>(false);
+
+  // Manual Highlight entry in sidebar
+  const [isAddingManualHighlight, setIsAddingManualHighlight] = useState<boolean>(false);
+  const [manualHlText, setManualHlText] = useState<string>('');
+  const [manualHlNote, setManualHlNote] = useState<string>('');
+  const [manualHlColor, setManualHlColor] = useState<string>('#fef08a');
+
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const pageContainerRef = useRef<HTMLDivElement | null>(null);
+  const textLayerRef = useRef<HTMLDivElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const renderTaskRef = useRef<pdfjsLib.RenderTask | null>(null);
   const objectUrlRef = useRef<string | null>(null);
@@ -175,6 +216,17 @@ export const PDFViewerModal: React.FC<PDFViewerModalProps> = ({
           throw new Error('PDF file content is missing from local IndexedDB.');
         }
         cachedBinaryRef.current = binary;
+
+        const isOfficeDoc =
+          item.format === 'pptx' ||
+          item.format === 'ppt' ||
+          item.format === 'docx' ||
+          item.format === 'doc';
+
+        if (isOfficeDoc) {
+          setIsLoading(false);
+          return;
+        }
 
         // Clone buffer to avoid detachment issues
         const bufferClone = binary.slice(0);
@@ -489,6 +541,210 @@ export const PDFViewerModal: React.FC<PDFViewerModalProps> = ({
     }
   };
 
+  // Check text selection in canvas view
+  const handleTextSelectionCheck = () => {
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed) return;
+
+    const text = selection.toString().trim();
+    if (text.length < 2) return;
+
+    if (!pageContainerRef.current) return;
+    const containerRect = pageContainerRef.current.getBoundingClientRect();
+
+    try {
+      const range = selection.getRangeAt(0);
+      const rangeRect = range.getBoundingClientRect();
+
+      // Check if inside container
+      if (
+        rangeRect.bottom < containerRect.top ||
+        rangeRect.top > containerRect.bottom ||
+        rangeRect.right < containerRect.left ||
+        rangeRect.left > containerRect.right
+      ) {
+        return;
+      }
+
+      // Calculate normalized rects (percentage 0-100)
+      const clientRects = Array.from(range.getClientRects());
+      const normalizedRects: HighlightRect[] = clientRects
+        .map(r => ({
+          x: Math.max(0, Math.min(100, ((r.left - containerRect.left) / containerRect.width) * 100)),
+          y: Math.max(0, Math.min(100, ((r.top - containerRect.top) / containerRect.height) * 100)),
+          width: Math.max(0, Math.min(100, (r.width / containerRect.width) * 100)),
+          height: Math.max(0, Math.min(100, (r.height / containerRect.height) * 100)),
+        }))
+        .filter(r => r.width > 0.1 && r.height > 0.1);
+
+      const relativeX = Math.max(
+        10,
+        Math.min(90, ((rangeRect.left + rangeRect.width / 2 - containerRect.left) / containerRect.width) * 100)
+      );
+      const relativeY = Math.max(
+        2,
+        ((rangeRect.top - containerRect.top) / containerRect.height) * 100
+      );
+
+      setSelectionPopup({
+        x: relativeX,
+        y: relativeY,
+        text,
+        rects: normalizedRects,
+      });
+      setShowNoteInputInPopup(false);
+      setPopupNoteText('');
+    } catch {
+      // Ignore
+    }
+  };
+
+  // Check text selection in reflow view
+  const handleReflowSelectionCheck = () => {
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed) return;
+
+    const text = selection.toString().trim();
+    if (text.length < 2) return;
+
+    setSelectionPopup({
+      x: 50,
+      y: 10,
+      text,
+      rects: [],
+    });
+    setShowNoteInputInPopup(false);
+    setPopupNoteText('');
+  };
+
+  // Save selected highlight
+  const handleSaveHighlight = async (colorToUse?: string, customNote?: string) => {
+    if (!docItem || !selectionPopup) return;
+    setIsSavingHighlight(true);
+    const chosenColor = colorToUse || activeHighlightColor;
+    const noteVal = customNote !== undefined ? customNote : popupNoteText;
+
+    try {
+      const newHl = await documentService.addDocumentHighlight(docItem.id, {
+        pageNumber: currentPage,
+        text: selectionPopup.text,
+        color: chosenColor,
+        note: noteVal.trim() || undefined,
+        rects: selectionPopup.rects,
+      });
+
+      setDocItem(prev => {
+        if (!prev) return null;
+        const currentList = prev.highlights || [];
+        return {
+          ...prev,
+          highlights: [...currentList, newHl].sort((a, b) => {
+            if (a.pageNumber !== b.pageNumber) return a.pageNumber - b.pageNumber;
+            return a.createdAt - b.createdAt;
+          }),
+        };
+      });
+
+      setSelectionPopup(null);
+      setPopupNoteText('');
+      setShowNoteInputInPopup(false);
+      window.getSelection()?.removeAllRanges();
+      onDocumentUpdated?.();
+    } catch (err) {
+      alert('Could not save highlight: ' + (err instanceof Error ? err.message : 'Error'));
+    } finally {
+      setIsSavingHighlight(false);
+    }
+  };
+
+  // Delete persistent highlight
+  const handleDeleteHighlight = async (hlId: string) => {
+    if (!docItem) return;
+    try {
+      await documentService.deleteDocumentHighlight(docItem.id, hlId);
+      setDocItem(prev => {
+        if (!prev) return null;
+        return {
+          ...prev,
+          highlights: (prev.highlights || []).filter(h => h.id !== hlId),
+        };
+      });
+      if (selectedHighlightForPopover?.id === hlId) {
+        setSelectedHighlightForPopover(null);
+      }
+      onDocumentUpdated?.();
+    } catch (err) {
+      console.error('Failed to remove highlight:', err);
+    }
+  };
+
+  // Save manual highlight entry
+  const handleSaveManualHighlight = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!docItem || !manualHlText.trim()) return;
+    setIsSavingHighlight(true);
+    try {
+      const newHl = await documentService.addDocumentHighlight(docItem.id, {
+        pageNumber: currentPage,
+        text: manualHlText.trim(),
+        color: manualHlColor,
+        note: manualHlNote.trim() || undefined,
+      });
+
+      setDocItem(prev => {
+        if (!prev) return null;
+        return {
+          ...prev,
+          highlights: [...(prev.highlights || []), newHl].sort((a, b) => a.pageNumber - b.pageNumber),
+        };
+      });
+
+      setManualHlText('');
+      setManualHlNote('');
+      setIsAddingManualHighlight(false);
+      onDocumentUpdated?.();
+    } catch (err) {
+      alert('Failed to save highlight: ' + (err instanceof Error ? err.message : 'Error'));
+    } finally {
+      setIsSavingHighlight(false);
+    }
+  };
+
+  // Copy all highlights to clipboard
+  const handleCopyAllHighlights = async () => {
+    if (!docItem || !docItem.highlights || docItem.highlights.length === 0) return;
+    const lines = [
+      `# Highlights & Study Notes: "${docItem.displayName}"`,
+      `Extracted: ${new Date().toLocaleDateString(undefined, { dateStyle: 'medium' })}`,
+      '',
+    ];
+
+    const sorted = [...docItem.highlights].sort((a, b) => {
+      if (a.pageNumber !== b.pageNumber) return a.pageNumber - b.pageNumber;
+      return a.createdAt - b.createdAt;
+    });
+
+    let curPage = -1;
+    for (const h of sorted) {
+      if (h.pageNumber !== curPage) {
+        curPage = h.pageNumber;
+        lines.push(`\n## Page ${curPage}`);
+      }
+      lines.push(`> "${h.text}"`);
+      if (h.note) {
+        lines.push(`Note: ${h.note}`);
+      }
+    }
+
+    try {
+      await navigator.clipboard.writeText(lines.join('\n'));
+      setCopiedHighlights(true);
+      setTimeout(() => setCopiedHighlights(false), 2000);
+    } catch {
+      alert('Could not copy to clipboard.');
+    }
+  };
+
   const getCanvasToneFilter = () => {
     switch (canvasTone) {
       case 'invert':
@@ -543,6 +799,25 @@ export const PDFViewerModal: React.FC<PDFViewerModalProps> = ({
         const renderTask = page.render(renderContext);
         renderTaskRef.current = renderTask;
         await renderTask.promise;
+
+        // Render transparent selectable text layer over the canvas
+        if (textLayerRef.current) {
+          textLayerRef.current.innerHTML = '';
+          textLayerRef.current.style.width = `${Math.floor(viewport.width)}px`;
+          textLayerRef.current.style.height = `${Math.floor(viewport.height)}px`;
+          try {
+            const textContent = await page.getTextContent();
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const textLayerInstance = new (pdfjsLib as any).TextLayer({
+              textContentSource: textContent,
+              container: textLayerRef.current,
+              viewport,
+            });
+            await textLayerInstance.render();
+          } catch (tlErr) {
+            console.debug('TextLayer render note:', tlErr);
+          }
+        }
       } catch (err: unknown) {
         if (
           err &&
@@ -575,7 +850,9 @@ export const PDFViewerModal: React.FC<PDFViewerModalProps> = ({
         e.preventDefault();
         setCurrentPage(p => Math.max(1, p - 1));
       } else if (e.key === 'Escape') {
-        if (isSearchOpen) setIsSearchOpen(false);
+        if (selectionPopup) setSelectionPopup(null);
+        else if (selectedHighlightForPopover) setSelectedHighlightForPopover(null);
+        else if (isSearchOpen) setIsSearchOpen(false);
         else if (showShortcutsModal) setShowShortcutsModal(false);
         else onClose();
       } else if (e.key === '+' || e.key === '=') {
@@ -593,6 +870,9 @@ export const PDFViewerModal: React.FC<PDFViewerModalProps> = ({
         setShowThumbnails(true);
         setSidebarTab('bookmarks');
         setIsAddingBookmark(true);
+      } else if (e.key === 'h' || e.key === 'H') {
+        setShowThumbnails(true);
+        setSidebarTab('highlights');
       } else if (e.key === 't' || e.key === 'T') {
         const tones: ReaderFilterTone[] = ['normal', 'invert', 'sepia', 'contrast'];
         setCanvasTone(prev => {
@@ -723,6 +1003,24 @@ export const PDFViewerModal: React.FC<PDFViewerModalProps> = ({
   };
 
   if (!documentId) return null;
+
+  if (
+    docItem &&
+    (docItem.format === 'pptx' ||
+      docItem.format === 'ppt' ||
+      docItem.format === 'docx' ||
+      docItem.format === 'doc') &&
+    cachedBinaryRef.current
+  ) {
+    return (
+      <OfficeViewer
+        document={docItem}
+        binary={cachedBinaryRef.current}
+        onClose={onClose}
+        onDocumentUpdated={onDocumentUpdated}
+      />
+    );
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-[#070b14] text-slate-100 select-none overflow-hidden animate-in fade-in duration-200">
@@ -952,6 +1250,29 @@ export const PDFViewerModal: React.FC<PDFViewerModalProps> = ({
             </button>
           )}
 
+          {/* Highlights Sidebar Shortcut Button */}
+          {!isPasswordRequired && (
+            <button
+              onClick={() => {
+                setShowThumbnails(true);
+                setSidebarTab('highlights');
+              }}
+              className={`p-2 rounded-xl transition flex items-center gap-1.5 ${
+                showThumbnails && sidebarTab === 'highlights'
+                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800'
+              }`}
+              title="View Document Highlights (H)"
+            >
+              <Highlighter className="w-4 h-4 text-amber-400" />
+              {(docItem?.highlights?.length || 0) > 0 && (
+                <span className="font-mono text-[10px] px-1.5 py-0.2 rounded-full bg-amber-500/30 text-amber-200">
+                  {docItem?.highlights?.length}
+                </span>
+              )}
+            </button>
+          )}
+
           <button
             onClick={handleToggleFavorite}
             className={`p-2 rounded-xl transition ${
@@ -1127,11 +1448,28 @@ export const PDFViewerModal: React.FC<PDFViewerModalProps> = ({
                     ? 'bg-sky-500/20 text-sky-300 font-semibold'
                     : 'text-slate-400 hover:text-white'
                 }`}
+                title="Page Bookmarks"
               >
                 <span>Bookmarks</span>
                 {(docItem?.pageBookmarks?.length || 0) > 0 && (
                   <span className="font-mono text-[9px] px-1.5 py-0.2 rounded-full bg-sky-500/30 text-sky-200">
                     {docItem?.pageBookmarks?.length}
+                  </span>
+                )}
+              </button>
+              <button
+                onClick={() => setSidebarTab('highlights')}
+                className={`flex-1 py-1.5 rounded-lg font-medium transition flex items-center justify-center gap-1 ${
+                  sidebarTab === 'highlights'
+                    ? 'bg-amber-500/20 text-amber-300 font-semibold'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+                title="Text Highlights"
+              >
+                <span>Highlights</span>
+                {(docItem?.highlights?.length || 0) > 0 && (
+                  <span className="font-mono text-[9px] px-1.5 py-0.2 rounded-full bg-amber-500/30 text-amber-200">
+                    {docItem?.highlights?.length}
                   </span>
                 )}
               </button>
@@ -1337,6 +1675,172 @@ export const PDFViewerModal: React.FC<PDFViewerModalProps> = ({
                             onClick={() => handleDeleteBookmark(bm.id)}
                             className="opacity-0 group-hover:opacity-100 p-1 text-slate-500 hover:text-rose-400 transition"
                             title="Delete bookmark"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Tab 3: Persistent Text Highlights */}
+            {sidebarTab === 'highlights' && (
+              <div className="space-y-3">
+                {/* Highlights Action Bar: Copy All & Manual Highlight */}
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={handleCopyAllHighlights}
+                    disabled={!docItem?.highlights || docItem.highlights.length === 0}
+                    className="flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white font-medium text-[11px] transition disabled:opacity-40"
+                    title="Copy all highlights and notes to clipboard"
+                  >
+                    {copiedHighlights ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copiedHighlights ? 'Copied Notes!' : 'Copy All Notes'}</span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setManualHlText('');
+                      setManualHlNote('');
+                      setIsAddingManualHighlight(!isAddingManualHighlight);
+                    }}
+                    className={`p-1.5 rounded-xl border transition ${
+                      isAddingManualHighlight
+                        ? 'bg-amber-500/25 border-amber-500/50 text-amber-300'
+                        : 'bg-amber-500/15 hover:bg-amber-500/25 border-amber-500/30 text-amber-300'
+                    }`}
+                    title="Add manual highlight excerpt for current page"
+                  >
+                    <Highlighter className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                {/* Manual Highlight Form */}
+                {isAddingManualHighlight && (
+                  <form onSubmit={handleSaveManualHighlight} className="p-3 rounded-2xl bg-slate-900 border border-amber-500/40 space-y-2.5 animate-in fade-in">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-amber-300 flex items-center gap-1">
+                        <Highlighter className="w-3 h-3" />
+                        <span>Highlight on Page {currentPage}</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setIsAddingManualHighlight(false)}
+                        className="text-slate-500 hover:text-white text-xs"
+                      >
+                        ✕
+                      </button>
+                    </div>
+
+                    <textarea
+                      placeholder="Quote or passage text..."
+                      value={manualHlText}
+                      onChange={e => setManualHlText(e.target.value)}
+                      rows={2}
+                      autoFocus
+                      required
+                      className="w-full px-2.5 py-1.5 rounded-lg bg-slate-950 border border-slate-700 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-400 resize-none"
+                    />
+
+                    <input
+                      type="text"
+                      placeholder="Add personal note (optional)..."
+                      value={manualHlNote}
+                      onChange={e => setManualHlNote(e.target.value)}
+                      className="w-full px-2.5 py-1.5 rounded-lg bg-slate-950 border border-slate-700 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-400"
+                    />
+
+                    {/* Color Picker Chips */}
+                    <div className="flex items-center gap-1.5 pt-0.5">
+                      <span className="text-[10px] text-slate-400 mr-1">Color:</span>
+                      {HIGHLIGHT_COLORS.map(c => (
+                        <button
+                          key={c.id}
+                          type="button"
+                          onClick={() => setManualHlColor(c.hex)}
+                          className={`w-5 h-5 rounded-full transition-transform ${
+                            manualHlColor === c.hex ? 'scale-125 ring-2 ring-white ring-offset-1 ring-offset-slate-900' : 'hover:scale-110'
+                          }`}
+                          style={{ backgroundColor: c.hex }}
+                        />
+                      ))}
+                    </div>
+
+                    <div className="flex gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setIsAddingManualHighlight(false)}
+                        className="flex-1 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-[11px] text-slate-400 font-medium"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={isSavingHighlight || !manualHlText.trim()}
+                        className="flex-1 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-[11px] disabled:opacity-50"
+                      >
+                        {isSavingHighlight ? 'Saving...' : 'Save'}
+                      </button>
+                    </div>
+                  </form>
+                )}
+
+                {/* Highlights Items List */}
+                <div className="space-y-2">
+                  {(docItem?.highlights || []).length === 0 ? (
+                    <div className="text-center py-6 px-2 text-slate-500 space-y-2">
+                      <Highlighter className="w-8 h-8 opacity-30 mx-auto text-amber-400" />
+                      <p className="text-xs">No highlights yet.</p>
+                      <p className="text-[10px] text-slate-500 leading-relaxed">
+                        Select text on any page with your cursor to highlight, or use the highlighter button above.
+                      </p>
+                    </div>
+                  ) : (
+                    (docItem?.highlights || []).map(hl => (
+                      <div
+                        key={hl.id}
+                        className={`p-2.5 rounded-xl border transition group ${
+                          currentPage === hl.pageNumber
+                            ? 'bg-amber-500/10 border-amber-500/40 shadow-sm'
+                            : 'bg-slate-900/60 border-slate-800 hover:border-slate-700'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-1.5">
+                          <button
+                            onClick={() => {
+                              setCurrentPage(hl.pageNumber);
+                              setSelectedHighlightForPopover(hl);
+                            }}
+                            className="flex-1 text-left min-w-0"
+                          >
+                            <div className="flex items-center gap-1.5">
+                              <span
+                                className="w-2.5 h-2.5 rounded-full shrink-0"
+                                style={{ backgroundColor: hl.color }}
+                              />
+                              <span className="text-[10px] font-mono font-bold text-amber-300 bg-amber-500/10 px-1.5 py-0.2 rounded">
+                                p. {hl.pageNumber}
+                              </span>
+                              <span className="text-[10px] text-slate-500 truncate">
+                                {new Date(hl.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                              </span>
+                            </div>
+                            <p className="text-xs text-slate-200 mt-1 line-clamp-2 italic font-serif">
+                              "{hl.text}"
+                            </p>
+                            {hl.note && (
+                              <p className="text-[11px] text-amber-200/90 mt-1 line-clamp-2 pl-2 border-l border-amber-500/40">
+                                {hl.note}
+                              </p>
+                            )}
+                          </button>
+                          <button
+                            onClick={() => handleDeleteHighlight(hl.id)}
+                            className="opacity-0 group-hover:opacity-100 p-1 text-slate-500 hover:text-rose-400 transition shrink-0"
+                            title="Delete highlight"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
@@ -1567,7 +2071,9 @@ export const PDFViewerModal: React.FC<PDFViewerModalProps> = ({
 
               {/* Text Body Container */}
               <div
-                className={`flex-1 overflow-y-auto rounded-3xl p-6 sm:p-10 shadow-2xl transition-colors ${
+                onMouseUp={handleReflowSelectionCheck}
+                onTouchEnd={handleReflowSelectionCheck}
+                className={`relative flex-1 overflow-y-auto rounded-3xl p-6 sm:p-10 shadow-2xl transition-colors ${
                   reflowTheme === 'day'
                     ? 'bg-[#fcfdfd] text-[#0f172a] shadow-slate-900/10'
                     : reflowTheme === 'sepia'
@@ -1603,6 +2109,38 @@ export const PDFViewerModal: React.FC<PDFViewerModalProps> = ({
                         {para}
                       </p>
                     ))}
+                    {/* Floating Selection Toolbar for Reflow */}
+                    {selectionPopup && viewMode === 'reflow' && (
+                      <div className="sticky top-2 z-30 flex items-center justify-between gap-2 bg-[#0c1220] border border-slate-700 shadow-2xl rounded-2xl p-2 animate-in fade-in max-w-md mx-auto mb-3">
+                        <div className="flex items-center gap-2">
+                          <Highlighter className="w-4 h-4 text-amber-400" />
+                          <span className="text-[11px] font-semibold text-white">Highlight:</span>
+                          <div className="flex items-center gap-1">
+                            {HIGHLIGHT_COLORS.map(c => (
+                              <button
+                                key={c.id}
+                                onClick={() => {
+                                  setActiveHighlightColor(c.hex);
+                                  handleSaveHighlight(c.hex);
+                                }}
+                                className="w-5 h-5 rounded-full hover:scale-110 transition shadow-sm border border-black/30"
+                                style={{ backgroundColor: c.hex }}
+                                title={`Highlight in ${c.name}`}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => {
+                            setSelectionPopup(null);
+                            window.getSelection()?.removeAllRanges();
+                          }}
+                          className="p-1 rounded-lg text-slate-400 hover:text-white"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="flex flex-col items-center justify-center h-64 text-center gap-3 max-w-sm mx-auto">
@@ -1624,12 +2162,190 @@ export const PDFViewerModal: React.FC<PDFViewerModalProps> = ({
               </div>
             </div>
           ) : (
-            <div className="shadow-2xl shadow-black/80 rounded-md overflow-hidden my-auto transition-transform">
+            <div
+              ref={pageContainerRef}
+              onMouseUp={handleTextSelectionCheck}
+              onTouchEnd={handleTextSelectionCheck}
+              className="relative shadow-2xl shadow-black/80 rounded-md overflow-hidden my-auto transition-transform"
+            >
               <canvas
                 ref={canvasRef}
                 style={{ filter: getCanvasToneFilter() }}
                 className="block max-w-full"
               />
+
+              {/* Persistent Highlight Overlays for Current Page */}
+              {(docItem?.highlights || [])
+                .filter(hl => hl.pageNumber === currentPage)
+                .map(hl => (
+                  <div key={hl.id} className="pointer-events-none">
+                    {hl.rects && hl.rects.length > 0 ? (
+                      hl.rects.map((rect, rIdx) => (
+                        <div
+                          key={rIdx}
+                          onClick={e => {
+                            e.stopPropagation();
+                            setSelectedHighlightForPopover(hl);
+                          }}
+                          className="absolute pointer-events-auto cursor-pointer rounded-[2px] transition-opacity hover:opacity-80"
+                          style={{
+                            left: `${rect.x}%`,
+                            top: `${rect.y}%`,
+                            width: `${rect.width}%`,
+                            height: `${rect.height}%`,
+                            backgroundColor: hl.color,
+                            opacity: 0.42,
+                            mixBlendMode: 'multiply',
+                          }}
+                          title={hl.note ? `"${hl.text}"\nNote: ${hl.note}` : `"${hl.text}"`}
+                        />
+                      ))
+                    ) : null}
+                  </div>
+                ))}
+
+              {/* Transparent Selectable Text Layer */}
+              <div
+                ref={textLayerRef}
+                className="textLayer"
+              />
+
+              {/* Floating Selection Highlight Toolbar */}
+              {selectionPopup && (
+                <div
+                  className="absolute z-30 flex flex-col items-center bg-[#0d1424] border border-slate-700 shadow-2xl rounded-2xl p-2 animate-in fade-in zoom-in-95 pointer-events-auto"
+                  style={{
+                    left: `${selectionPopup.x}%`,
+                    top: `${selectionPopup.y}%`,
+                    transform: 'translate(-50%, -100%) translateY(-10px)',
+                  }}
+                  onMouseDown={e => e.stopPropagation()}
+                >
+                  <div className="flex items-center gap-1.5">
+                    {/* Color Swatches */}
+                    <div className="flex items-center gap-1 pr-1 border-r border-slate-800">
+                      {HIGHLIGHT_COLORS.map(c => (
+                        <button
+                          key={c.id}
+                          onClick={() => {
+                            setActiveHighlightColor(c.hex);
+                            handleSaveHighlight(c.hex);
+                          }}
+                          className={`w-5 h-5 rounded-full transition-transform hover:scale-110 shadow-sm border ${
+                            activeHighlightColor === c.hex ? 'ring-2 ring-white scale-110' : 'border-black/30'
+                          }`}
+                          style={{ backgroundColor: c.hex }}
+                          title={`Highlight with ${c.name}`}
+                        />
+                      ))}
+                    </div>
+
+                    {/* Note Toggle */}
+                    <button
+                      onClick={() => setShowNoteInputInPopup(!showNoteInputInPopup)}
+                      className={`p-1.5 rounded-lg text-xs transition ${
+                        showNoteInputInPopup || popupNoteText
+                          ? 'bg-sky-500/20 text-sky-300'
+                          : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                      }`}
+                      title="Add note to highlight"
+                    >
+                      <MessageSquare className="w-3.5 h-3.5" />
+                    </button>
+
+                    {/* Dismiss */}
+                    <button
+                      onClick={() => {
+                        setSelectionPopup(null);
+                        window.getSelection()?.removeAllRanges();
+                      }}
+                      className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800"
+                      title="Dismiss"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+
+                  {/* Inline Note Input */}
+                  {showNoteInputInPopup && (
+                    <div className="mt-2 w-56 flex gap-1 pt-1.5 border-t border-slate-800">
+                      <input
+                        type="text"
+                        placeholder="Add a note or tag..."
+                        value={popupNoteText}
+                        onChange={e => setPopupNoteText(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') {
+                            handleSaveHighlight(activeHighlightColor, popupNoteText);
+                          }
+                        }}
+                        autoFocus
+                        className="flex-1 px-2 py-1 rounded-lg bg-slate-900 border border-slate-700 text-[11px] text-white focus:outline-none focus:border-sky-500"
+                      />
+                      <button
+                        onClick={() => handleSaveHighlight(activeHighlightColor, popupNoteText)}
+                        disabled={isSavingHighlight}
+                        className="px-2 py-1 rounded-lg bg-sky-500 hover:bg-sky-400 text-slate-950 font-bold text-[10px]"
+                      >
+                        Save
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Clicked Highlight Info Popover on Page */}
+              {selectedHighlightForPopover && selectedHighlightForPopover.pageNumber === currentPage && (
+                <div
+                  className="absolute z-30 max-w-xs bg-[#0b1222] border border-sky-500/40 shadow-2xl rounded-2xl p-3.5 animate-in fade-in zoom-in-95 pointer-events-auto text-left"
+                  style={{
+                    left: `${selectedHighlightForPopover.rects?.[0]?.x || 50}%`,
+                    top: `${Math.min(85, (selectedHighlightForPopover.rects?.[0]?.y || 50) + 5)}%`,
+                    transform: 'translateX(-50%)',
+                  }}
+                  onClick={e => e.stopPropagation()}
+                >
+                  <div className="flex items-center justify-between gap-2 pb-1.5 border-b border-slate-800">
+                    <div className="flex items-center gap-1.5">
+                      <span
+                        className="w-2.5 h-2.5 rounded-full"
+                        style={{ backgroundColor: selectedHighlightForPopover.color }}
+                      />
+                      <span className="text-[10px] font-mono text-sky-400">
+                        Page {selectedHighlightForPopover.pageNumber} Highlight
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => setSelectedHighlightForPopover(null)}
+                      className="text-slate-400 hover:text-white"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+
+                  <p className="text-xs text-slate-200 mt-2 italic line-clamp-3">
+                    "{selectedHighlightForPopover.text}"
+                  </p>
+
+                  {selectedHighlightForPopover.note && (
+                    <div className="mt-2 p-1.5 rounded-lg bg-slate-900/80 border border-slate-800 text-[11px] text-amber-200">
+                      <span className="font-semibold text-slate-400">Note: </span>
+                      {selectedHighlightForPopover.note}
+                    </div>
+                  )}
+
+                  <div className="mt-3 pt-2 border-t border-slate-800 flex items-center justify-between text-[10px] text-slate-500">
+                    <span>{new Date(selectedHighlightForPopover.createdAt).toLocaleDateString()}</span>
+                    <button
+                      onClick={() => handleDeleteHighlight(selectedHighlightForPopover.id)}
+                      className="flex items-center gap-1 text-rose-400 hover:text-rose-300 font-medium"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      <span>Remove</span>
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>

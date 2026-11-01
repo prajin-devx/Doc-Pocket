@@ -1,5 +1,5 @@
 import React from 'react';
-import { X, Command, Keyboard, Search, UploadCloud, Cloud, BookOpen, ZoomIn, RotateCw, Maximize2 } from 'lucide-react';
+import { X, Command, Keyboard, Search, UploadCloud, Cloud, BookOpen, ZoomIn, RotateCw, Maximize2, Highlighter, Bookmark } from 'lucide-react';
 
 interface KeyboardShortcutsModalProps {
   isOpen: boolean;
@@ -49,6 +49,18 @@ const SHORTCUTS: ShortcutItem[] = [
     description: 'Turn to previous or next page',
     category: 'PDF Viewer',
     icon: BookOpen,
+  },
+  {
+    keys: ['H'],
+    description: 'Toggle highlights & notes panel',
+    category: 'PDF Viewer',
+    icon: Highlighter,
+  },
+  {
+    keys: ['B'],
+    description: 'Bookmark current page',
+    category: 'PDF Viewer',
+    icon: Bookmark,
   },
   {
     keys: ['+', '-'],

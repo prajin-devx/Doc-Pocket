@@ -1,7 +1,14 @@
 import JSZip from 'jszip';
 import { db } from './database';
-import { DocumentItem, DocumentBinary, PageBookmark } from '../types';
-import { inspectPDF, extractAllPDFText } from './pdf-service';
+import { DocumentItem, DocumentBinary, PageBookmark, DocumentHighlight, DocumentFormat, SlideItem } from '../types';
+import { inspectPDF, extractAllPDFText, computeFileHash } from './pdf-service';
+import {
+  getDocumentFormat,
+  getDocumentMimeType,
+  inspectDocx,
+  inspectPptx,
+  inspectLegacyOffice,
+} from './office-service';
 
 export interface ImportResult {
   document: DocumentItem;
@@ -18,11 +25,15 @@ export interface ImportOptions {
 
 export const documentService = {
   /**
-   * Import a single PDF File object from file picker
+   * Import a single File object (PDF, PowerPoint, Word) from file picker or drag-drop
    */
   async importFile(file: File, options?: ImportOptions): Promise<ImportResult> {
-    if (!file.name.toLowerCase().endsWith('.pdf') && file.type !== 'application/pdf') {
-      throw new Error(`"${file.name}" is not a valid PDF file.`);
+    const format = getDocumentFormat(file.name, file.type);
+    const validExtensions = ['.pdf', '.docx', '.doc', '.pptx', '.ppt'];
+    const isSupported = validExtensions.some(ext => file.name.toLowerCase().endsWith(ext));
+
+    if (!isSupported && !file.type.includes('pdf') && !file.type.includes('word') && !file.type.includes('presentation') && !file.type.includes('officedocument')) {
+      throw new Error(`"${file.name}" is not a supported file format. Please upload PDF, PowerPoint (.pptx, .ppt), or Word (.docx, .doc) documents.`);
     }
 
     const arrayBuffer = await file.arrayBuffer();
@@ -30,7 +41,7 @@ export const documentService = {
   },
 
   /**
-   * Import PDF from raw ArrayBuffer
+   * Import document (PDF, DOCX, PPTX, DOC, PPT) from raw ArrayBuffer
    */
   async importArrayBuffer(
     buffer: ArrayBuffer,
@@ -38,14 +49,66 @@ export const documentService = {
     fileSize: number,
     options?: ImportOptions
   ): Promise<ImportResult> {
-    const inspected = await inspectPDF(buffer);
+    const format: DocumentFormat = getDocumentFormat(fileName);
+    const mimeType = getDocumentMimeType(fileName, format);
+
+    let pageCount = 1;
+    let slideCount: number | undefined;
+    let wordCount: number | undefined;
+    let slides: SlideItem[] | undefined;
+    let docxHtml: string | undefined;
+    let thumbnailDataUrl: string | undefined;
+    let extractedTitle: string | undefined;
+    let fileHash = '';
+    let isPasswordProtected = false;
+    let extractedTextCache: string | undefined;
+
+    if (format === 'docx') {
+      const officeMeta = await inspectDocx(buffer, fileName);
+      pageCount = officeMeta.pageCount;
+      wordCount = officeMeta.wordCount;
+      docxHtml = officeMeta.docxHtml;
+      extractedTitle = officeMeta.extractedTitle;
+      thumbnailDataUrl = officeMeta.thumbnailDataUrl;
+      fileHash = officeMeta.fileHash;
+      extractedTextCache = officeMeta.extractedText;
+    } else if (format === 'pptx') {
+      const officeMeta = await inspectPptx(buffer, fileName);
+      pageCount = officeMeta.pageCount;
+      slideCount = officeMeta.slideCount;
+      slides = officeMeta.slides;
+      extractedTitle = officeMeta.extractedTitle;
+      thumbnailDataUrl = officeMeta.thumbnailDataUrl;
+      fileHash = officeMeta.fileHash;
+      extractedTextCache = officeMeta.extractedText;
+    } else if (format === 'doc' || format === 'ppt') {
+      const officeMeta = await inspectLegacyOffice(buffer, fileName, format);
+      pageCount = officeMeta.pageCount;
+      slideCount = officeMeta.slideCount;
+      extractedTitle = officeMeta.extractedTitle;
+      thumbnailDataUrl = officeMeta.thumbnailDataUrl;
+      fileHash = officeMeta.fileHash;
+      extractedTextCache = officeMeta.extractedText;
+    } else {
+      // PDF document
+      const inspected = await inspectPDF(buffer);
+      pageCount = inspected.pageCount;
+      thumbnailDataUrl = inspected.thumbnailDataUrl;
+      extractedTitle = inspected.extractedTitle;
+      fileHash = inspected.fileHash;
+      isPasswordProtected = inspected.isPasswordProtected || false;
+    }
+
+    if (!fileHash) {
+      fileHash = await computeFileHash(buffer);
+    }
 
     // Check for duplicate by hash if not skipped
     let duplicateOf: DocumentItem | undefined;
     if (!options?.skipDuplicateCheck) {
       duplicateOf = await db.documents
         .where('fileHash')
-        .equals(inspected.fileHash)
+        .equals(fileHash)
         .first();
 
       if (!duplicateOf) {
@@ -60,7 +123,7 @@ export const documentService = {
 
     // Default display name clean up
     const cleanDisplayName =
-      inspected.extractedTitle || fileName.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
+      extractedTitle || fileName.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
 
     const newDocId = `doc_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
     const newDoc: DocumentItem = {
@@ -68,17 +131,24 @@ export const documentService = {
       fileName,
       displayName: cleanDisplayName.trim() || fileName,
       fileSize,
-      pageCount: inspected.pageCount,
-      thumbnailDataUrl: inspected.thumbnailDataUrl,
+      pageCount,
+      slideCount,
+      wordCount,
+      slides,
+      docxHtml,
+      thumbnailDataUrl,
+      format,
+      mimeType,
       category: options?.category || 'inbox',
       tags: options?.tags || [],
       description: options?.description || '',
       isFavorite: false,
       isPinned: false,
       importedAt: Date.now(),
-      fileHash: inspected.fileHash,
-      isPasswordProtected: inspected.isPasswordProtected || false,
+      fileHash,
+      isPasswordProtected,
       version: 1,
+      extractedTextCache,
     };
 
     // Transactionally store metadata and binary
@@ -287,19 +357,20 @@ export const documentService = {
   },
 
   /**
-   * Download the document as a native file
+   * Download the document as a native file (PDF, PPTX, DOCX, etc.)
    */
   async downloadDocument(doc: DocumentItem): Promise<void> {
     const binary = await this.getDocumentBinary(doc.id);
     if (!binary) {
-      throw new Error('PDF data could not be retrieved from IndexedDB.');
+      throw new Error('Document binary data could not be retrieved from IndexedDB.');
     }
 
-    const blob = new Blob([binary], { type: 'application/pdf' });
+    const mime = doc.mimeType || getDocumentMimeType(doc.fileName, doc.format);
+    const blob = new Blob([binary], { type: mime });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = doc.fileName.endsWith('.pdf') ? doc.fileName : `${doc.fileName}.pdf`;
+    a.download = doc.fileName;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -323,8 +394,7 @@ export const documentService = {
       }
       const binary = await this.getDocumentBinary(d.id);
       if (binary) {
-        const safeName = d.fileName.endsWith('.pdf') ? d.fileName : `${d.fileName}.pdf`;
-        zip.file(safeName, binary);
+        zip.file(d.fileName, binary);
       }
     }
 
@@ -410,6 +480,67 @@ export const documentService = {
   },
 
   /**
+   * Add a persistent text highlight to a document
+   */
+  async addDocumentHighlight(
+    docId: string,
+    highlight: Omit<DocumentHighlight, 'id' | 'createdAt'>
+  ): Promise<DocumentHighlight> {
+    const doc = await db.documents.get(docId);
+    if (!doc) throw new Error('Document not found');
+
+    const newHighlight: DocumentHighlight = {
+      ...highlight,
+      id: 'hl_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
+      createdAt: Date.now(),
+    };
+
+    const currentHighlights = doc.highlights || [];
+    const updated = [...currentHighlights, newHighlight].sort((a, b) => {
+      if (a.pageNumber !== b.pageNumber) return a.pageNumber - b.pageNumber;
+      return a.createdAt - b.createdAt;
+    });
+
+    await db.documents.update(docId, { highlights: updated });
+    return newHighlight;
+  },
+
+  /**
+   * Delete a persistent highlight
+   */
+  async deleteDocumentHighlight(docId: string, highlightId: string): Promise<void> {
+    const doc = await db.documents.get(docId);
+    if (!doc) return;
+
+    const updated = (doc.highlights || []).filter(h => h.id !== highlightId);
+    await db.documents.update(docId, { highlights: updated });
+  },
+
+  /**
+   * Update an existing highlight note or color
+   */
+  async updateDocumentHighlight(
+    docId: string,
+    highlightId: string,
+    updates: Partial<Omit<DocumentHighlight, 'id' | 'createdAt' | 'pageNumber'>>
+  ): Promise<void> {
+    const doc = await db.documents.get(docId);
+    if (!doc) return;
+
+    const updated = (doc.highlights || []).map(h => {
+      if (h.id === highlightId) {
+        return {
+          ...h,
+          ...updates,
+        };
+      }
+      return h;
+    });
+
+    await db.documents.update(docId, { highlights: updated });
+  },
+
+  /**
    * Extracts and caches text for a document to enable instant deep searching and reflow reading
    */
   async extractAndCacheDocumentText(docId: string): Promise<string> {
@@ -423,7 +554,23 @@ export const documentService = {
     const binary = await this.getDocumentBinary(docId);
     if (!binary) return '';
 
-    const { fullText } = await extractAllPDFText(binary, 30);
+    let fullText = '';
+    const format = doc.format || getDocumentFormat(doc.fileName);
+
+    if (format === 'docx') {
+      const meta = await inspectDocx(binary, doc.fileName);
+      fullText = meta.extractedText;
+    } else if (format === 'pptx') {
+      const meta = await inspectPptx(binary, doc.fileName);
+      fullText = meta.extractedText;
+    } else if (format === 'doc' || format === 'ppt') {
+      const meta = await inspectLegacyOffice(binary, doc.fileName, format);
+      fullText = meta.extractedText;
+    } else {
+      const pdfRes = await extractAllPDFText(binary, 30);
+      fullText = pdfRes.fullText;
+    }
+
     if (fullText) {
       await db.documents.update(docId, { extractedTextCache: fullText });
     }
