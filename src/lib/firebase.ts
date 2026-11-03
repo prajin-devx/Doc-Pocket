@@ -22,6 +22,25 @@ googleProvider.setCustomParameters({ prompt: 'select_account' });
 let cachedAccessToken: string | null = null;
 let isSigningIn = false;
 
+// Token change listeners
+const tokenListeners = new Set<(token: string | null) => void>();
+
+export function onTokenChange(cb: (token: string | null) => void): () => void {
+  tokenListeners.add(cb);
+  return () => tokenListeners.delete(cb);
+}
+
+function notifyTokenChange(token: string | null) {
+  cachedAccessToken = token;
+  tokenListeners.forEach(cb => {
+    try {
+      cb(token);
+    } catch (err) {
+      console.warn('Error in token listener:', err);
+    }
+  });
+}
+
 /**
  * Initialize auth listener. Clears memory token when user signs out.
  */
@@ -33,7 +52,7 @@ export const initAuth = (
     if (user) {
       if (onAuthSuccess) onAuthSuccess(user, cachedAccessToken);
     } else {
-      cachedAccessToken = null;
+      notifyTokenChange(null);
       if (onAuthFailure) onAuthFailure();
     }
   });
@@ -47,11 +66,17 @@ export async function loginWithGoogle(): Promise<{ user: User; accessToken: stri
     isSigningIn = true;
     const result = await signInWithPopup(auth, googleProvider);
     const credential = GoogleAuthProvider.credentialFromResult(result);
-    if (!credential?.accessToken) {
-      throw new Error('Failed to obtain Google access token');
+    const token =
+      credential?.accessToken ||
+      (result as any)?._tokenResponse?.oauthAccessToken ||
+      (result as any)?._tokenResponse?.oauthIdToken ||
+      (result as any)?.credential?.accessToken;
+
+    if (!token) {
+      throw new Error('Google authorization succeeded but no access token was returned.');
     }
-    cachedAccessToken = credential.accessToken;
-    return { user: result.user, accessToken: cachedAccessToken };
+    notifyTokenChange(token);
+    return { user: result.user, accessToken: token };
   } catch (error) {
     console.error('Google Sign-in error:', error);
     throw error;
@@ -68,16 +93,23 @@ export async function getAccessToken(): Promise<string | null> {
 }
 
 /**
+ * Check if active access token is present
+ */
+export function hasCachedAccessToken(): boolean {
+  return !!cachedAccessToken;
+}
+
+/**
  * Set active access token in memory cache
  */
 export function setCachedAccessToken(token: string | null): void {
-  cachedAccessToken = token;
+  notifyTokenChange(token);
 }
 
 /**
  * Sign out user and purge in-memory token
  */
 export async function logoutUser(): Promise<void> {
+  notifyTokenChange(null);
   await fbSignOut(auth);
-  cachedAccessToken = null;
 }

@@ -257,6 +257,13 @@ export const documentService = {
   },
 
   /**
+   * Update arbitrary document metadata fields (e.g. cached slides, docxHtml, wordCount)
+   */
+  async updateDocumentMetadata(id: string, updates: Partial<DocumentItem>): Promise<void> {
+    await db.documents.update(id, updates);
+  },
+
+  /**
    * Toggle favorite
    */
   async toggleFavorite(id: string): Promise<boolean> {

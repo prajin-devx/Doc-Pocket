@@ -48,6 +48,12 @@ If your earlier Vercel build failed, it was due to three issues that commonly af
 5. **Deploy:**
    Click **"Deploy"**. Vercel will complete the build and provide an `https://<your-app>.vercel.app` domain with free SSL.
 
+6. **Add Domain to Firebase Authorized Domains (CRITICAL for Google Auth on Vercel):**
+   - Go to [Firebase Console](https://console.firebase.google.com/) > Select your project (`gen-lang-client-0964622442`).
+   - Navigate to **Build** > **Authentication** > **Settings** tab > **Authorized domains**.
+   - Click **"Add domain"** and enter your Vercel deployment domain (e.g. `doc-pocket-v1.vercel.app` or any custom domain).
+   - Click **Save**. This ensures Google Sign-In and OAuth popup authorization work without `auth/unauthorized-domain` errors.
+
 ---
 
 ### Method B: Via Vercel CLI

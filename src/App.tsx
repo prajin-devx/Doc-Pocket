@@ -25,13 +25,14 @@ import {
   CheckCircle2,
   AlertCircle,
   Keyboard,
+  Presentation,
 } from 'lucide-react';
 import { AppSettings, CollectionItem, DashboardSectionId, DocumentItem, UserProfile } from './types';
 import { db, initializeDatabase } from './lib/database';
 import { documentService } from './lib/document-service';
 import { collectionService } from './lib/collection-service';
 import { storageService, formatBytes } from './lib/storage-service';
-import { auth, loginWithGoogle, logoutUser, initAuth, getAccessToken } from './lib/firebase';
+import { auth, loginWithGoogle, logoutUser, initAuth, getAccessToken, onTokenChange, hasCachedAccessToken } from './lib/firebase';
 import { googleDriveService } from './lib/google-drive-service';
 import { DashboardView } from './features/dashboard/DashboardView';
 import { DocumentLibraryView } from './features/documents/DocumentLibraryView';
@@ -74,6 +75,7 @@ export default function App() {
   const [allTags, setAllTags] = useState<string[]>([]);
   const [totalStorageBytes, setTotalStorageBytes] = useState<number>(0);
   const [user, setUser] = useState<UserProfile | null>(null);
+  const [hasDriveToken, setHasDriveToken] = useState<boolean>(() => hasCachedAccessToken());
   const [isAuthLoading, setIsAuthLoading] = useState(true);
 
   // Auto-sync status for Google Drive
@@ -107,6 +109,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'library' | 'collections'>('dashboard');
   const [libraryFilters, setLibraryFilters] = useState<{
     category?: string;
+    format?: 'all' | 'pdf' | 'pptx' | 'docx';
     onlyFavorites?: boolean;
     onlyPinned?: boolean;
     searchQuery?: string;
@@ -208,6 +211,11 @@ export default function App() {
 
   // Listen to Google Auth state & trigger Auto-Backup / Auto-Restore on login
   useEffect(() => {
+    // Listen to token changes in memory
+    const unsubToken = onTokenChange(token => {
+      setHasDriveToken(!!token);
+    });
+
     const unsubscribe = initAuth(
       async (fbUser, token) => {
         if (fbUser) {
@@ -218,6 +226,7 @@ export default function App() {
             photoURL: fbUser.photoURL,
           };
           setUser(profile);
+          setHasDriveToken(!!token);
 
           // Auto-sync & auto-restore upon login
           if (token && settings.autoSyncEnabled !== false) {
@@ -225,16 +234,21 @@ export default function App() {
           }
         } else {
           setUser(null);
+          setHasDriveToken(false);
         }
         setIsAuthLoading(false);
       },
       () => {
         setUser(null);
+        setHasDriveToken(false);
         setIsAuthLoading(false);
       }
     );
 
-    return () => unsubscribe();
+    return () => {
+      unsubToken();
+      unsubscribe();
+    };
   }, [triggerAutoSync, settings.autoSyncEnabled]);
 
   // Apply theme class to document
@@ -418,15 +432,18 @@ export default function App() {
 
   const handleNavigateToLibrary = (filters?: {
     category?: string;
+    format?: 'all' | 'pdf' | 'pptx' | 'docx';
     onlyFavorites?: boolean;
     onlyPinned?: boolean;
+    searchQuery?: string;
   }) => {
     setLibraryFilters(filters || {});
     setActiveTab('library');
   };
 
-  const handleLoginGoogle = async () => {
+  const handleLoginGoogle = async (): Promise<boolean> => {
     try {
+      setIsAuthLoading(true);
       const { user: loggedUser } = await loginWithGoogle();
       const profile: UserProfile = {
         uid: loggedUser.uid,
@@ -435,21 +452,47 @@ export default function App() {
         photoURL: loggedUser.photoURL,
       };
       setUser(profile);
+      setHasDriveToken(true);
       await refreshVaultData();
       if (settings.autoSyncEnabled !== false) {
         triggerAutoSync(settings);
       }
-    } catch (err) {
-      alert('Google Sign-In failed: ' + (err instanceof Error ? err.message : 'Error'));
+      return true;
+    } catch (err: any) {
+      console.error('Google Sign-In failed:', err);
+      const code = err?.code || '';
+      if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+        return false;
+      }
+      if (code === 'auth/unauthorized-domain') {
+        alert(
+          'Domain Authorization Notice: The current host ("' +
+            window.location.hostname +
+            '") is not yet on the Firebase Authorized Domains list. Please add "' +
+            window.location.hostname +
+            '" in Firebase Console -> Authentication -> Settings -> Authorized Domains.'
+        );
+        return false;
+      }
+      if (code === 'auth/popup-blocked') {
+        alert('Sign-in popup was blocked by your browser. Please allow popups for this site and try again.');
+        return false;
+      }
+      alert('Google Sign-In: ' + (err instanceof Error ? err.message : 'Authentication could not be completed.'));
+      return false;
+    } finally {
+      setIsAuthLoading(false);
     }
   };
 
   const handleLogout = async () => {
     try {
       await logoutUser();
+      googleDriveService.resetCache();
       setUser(null);
+      setHasDriveToken(false);
     } catch (err) {
-      alert('Sign out failed: ' + (err instanceof Error ? err.message : 'Error'));
+      alert('Sign out notice: ' + (err instanceof Error ? err.message : 'Error'));
     }
   };
 
@@ -599,6 +642,42 @@ export default function App() {
               </span>
             </button>
 
+            {/* PowerPoint Presentations Shortcut */}
+            <button
+              onClick={() => handleNavigateToLibrary({ format: 'pptx' })}
+              className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl font-medium transition ${
+                activeTab === 'library' && libraryFilters.format === 'pptx'
+                  ? 'bg-orange-500/15 text-orange-300 border border-orange-500/30 font-semibold'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/60'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <Presentation className="w-4 h-4 text-orange-400" />
+                <span>Presentations (.ppt)</span>
+              </div>
+              <span className="font-mono text-[10px] text-orange-400 font-bold bg-orange-500/10 px-2 py-0.5 rounded-full">
+                {documents.filter(d => d.format === 'pptx' || d.format === 'ppt').length}
+              </span>
+            </button>
+
+            {/* Word Documents Shortcut */}
+            <button
+              onClick={() => handleNavigateToLibrary({ format: 'docx' })}
+              className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl font-medium transition ${
+                activeTab === 'library' && libraryFilters.format === 'docx'
+                  ? 'bg-blue-500/15 text-blue-300 border border-blue-500/30 font-semibold'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/60'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <FileText className="w-4 h-4 text-blue-400" />
+                <span>Word Docs (.doc)</span>
+              </div>
+              <span className="font-mono text-[10px] text-blue-400 font-bold bg-blue-500/10 px-2 py-0.5 rounded-full">
+                {documents.filter(d => d.format === 'docx' || d.format === 'doc').length}
+              </span>
+            </button>
+
             <button
               onClick={() => handleNavigateToLibrary({ onlyPinned: true })}
               className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl font-medium transition ${
@@ -656,10 +735,21 @@ export default function App() {
                   <p className="font-semibold text-white truncate text-[11px]">
                     {user.displayName || 'User'}
                   </p>
-                  <p className="text-[10px] text-emerald-400 flex items-center gap-1">
-                    <Cloud className="w-2.5 h-2.5" />
-                    <span>Google Drive Vault</span>
-                  </p>
+                  {hasDriveToken ? (
+                    <p className="text-[10px] text-emerald-400 flex items-center gap-1 font-medium">
+                      <Cloud className="w-2.5 h-2.5" />
+                      <span>Google Drive Vault</span>
+                    </p>
+                  ) : (
+                    <button
+                      onClick={handleLoginGoogle}
+                      className="text-[10px] text-amber-400 hover:text-amber-300 font-medium flex items-center gap-1 transition text-left"
+                      title="Click to reconnect Google Drive"
+                    >
+                      <AlertCircle className="w-2.5 h-2.5 text-amber-400 shrink-0" />
+                      <span>Drive offline • Reconnect</span>
+                    </button>
+                  )}
                 </div>
               </div>
               <button
@@ -796,7 +886,17 @@ export default function App() {
             {/* Live Google Drive Auto-Sync Indicator */}
             {user && (
               <div className="flex items-center">
-                {syncStatus.state === 'syncing' && (
+                {!hasDriveToken ? (
+                  <button
+                    onClick={handleLoginGoogle}
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs hover:bg-amber-500/25 transition"
+                    title="Google Drive session expired. Click to reconnect."
+                  >
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0 text-amber-400" />
+                    <span className="hidden md:inline text-[11px] font-medium">Drive Offline • Reconnect</span>
+                    <span className="md:hidden text-[11px]">Reconnect</span>
+                  </button>
+                ) : syncStatus.state === 'syncing' ? (
                   <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-sky-500/10 border border-sky-500/30 text-sky-400 text-xs font-medium animate-pulse">
                     <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
                     <span className="hidden md:inline truncate max-w-[200px]">
@@ -804,9 +904,7 @@ export default function App() {
                     </span>
                     <span className="md:hidden">Syncing</span>
                   </div>
-                )}
-
-                {syncStatus.state === 'synced' && (
+                ) : syncStatus.state === 'synced' ? (
                   <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-xs font-medium">
                     <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
                     <span className="hidden md:inline truncate max-w-[220px]">
@@ -814,9 +912,7 @@ export default function App() {
                     </span>
                     <span className="md:hidden">Synced</span>
                   </div>
-                )}
-
-                {syncStatus.state === 'error' && (
+                ) : syncStatus.state === 'error' ? (
                   <button
                     onClick={() => triggerAutoSync(settings)}
                     className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs hover:bg-amber-500/25 transition"
@@ -825,7 +921,7 @@ export default function App() {
                     <AlertCircle className="w-3.5 h-3.5 shrink-0 text-amber-400" />
                     <span className="hidden md:inline text-[11px]">Retry Sync</span>
                   </button>
-                )}
+                ) : null}
               </div>
             )}
 
@@ -1050,6 +1146,7 @@ export default function App() {
                 collections={collections}
                 allTags={allTags}
                 initialCategory={libraryFilters.category || 'all'}
+                initialFormat={libraryFilters.format || 'all'}
                 initialOnlyFavorites={libraryFilters.onlyFavorites || false}
                 initialOnlyPinned={libraryFilters.onlyPinned || false}
                 initialSearchQuery={libraryFilters.searchQuery || globalSearch || ''}
@@ -1163,6 +1260,9 @@ export default function App() {
         onSuccess={() => {
           setDraggedFiles([]);
           refreshVaultData();
+          if (user && hasDriveToken && settings.autoSyncEnabled !== false) {
+            triggerAutoSync(settings);
+          }
         }}
         defaultCategory={importCategory}
         initialFiles={draggedFiles}
@@ -1222,6 +1322,7 @@ export default function App() {
         }}
         initialTab={backupTab}
         user={user}
+        hasDriveToken={hasDriveToken}
         onLoginGoogle={handleLoginGoogle}
         settings={settings}
       />
@@ -1250,6 +1351,7 @@ export default function App() {
         onClose={() => setIsSettingsOpen(false)}
         settings={settings}
         user={user}
+        hasDriveToken={hasDriveToken}
         onLoginGoogle={handleLoginGoogle}
         onLogout={handleLogout}
         onOpenLayoutModal={() => setIsLayoutModalOpen(true)}

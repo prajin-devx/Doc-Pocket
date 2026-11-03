@@ -1,4 +1,4 @@
-import { getAccessToken } from './firebase';
+import { getAccessToken, setCachedAccessToken } from './firebase';
 import { db } from './database';
 import {
   AppSettings,
@@ -60,11 +60,33 @@ class GoogleDriveService {
 
   private _notifySync(state: SyncState, message?: string) {
     this._syncState = state;
-    this._syncListeners.forEach(listener => listener(state, message));
+    this._syncListeners.forEach(listener => {
+      try {
+        listener(state, message);
+      } catch (err) {
+        console.warn('Error in sync listener:', err);
+      }
+    });
   }
 
   public get currentSyncState(): SyncState {
     return this._syncState;
+  }
+
+  /**
+   * Reset in-memory folder cache (used on logout or 401 re-auth)
+   */
+  public resetCache(): void {
+    this._cachedFolderId = null;
+    this._categoryFolderMap.clear();
+  }
+
+  /**
+   * Check if an active access token is present in memory
+   */
+  public async hasToken(): Promise<boolean> {
+    const token = await getAccessToken();
+    return !!token;
   }
 
   /**
@@ -73,9 +95,30 @@ class GoogleDriveService {
   async requireToken(): Promise<string> {
     const token = await getAccessToken();
     if (!token) {
-      throw new Error('Google Drive access token not available. Please sign in with Google to enable Drive sync.');
+      this._notifySync('error', 'Google Drive access token not available. Please connect with Google.');
+      throw new Error('Google Drive access token not available. Please sign in or reconnect with Google to enable Drive backup.');
     }
     return token;
+  }
+
+  /**
+   * Central authenticated fetch helper with 401 token invalidation & recovery
+   */
+  private async _fetch(url: string, options: RequestInit = {}): Promise<Response> {
+    const token = await this.requireToken();
+    const headers = new Headers(options.headers || {});
+    if (!headers.has('Authorization')) {
+      headers.set('Authorization', `Bearer ${token}`);
+    }
+
+    const res = await fetch(url, { ...options, headers });
+    if (res.status === 401) {
+      setCachedAccessToken(null);
+      this.resetCache();
+      this._notifySync('error', 'Google Drive session expired. Please reconnect.');
+      throw new Error('Google Drive session expired (401). Please click Reconnect to continue.');
+    }
+    return res;
   }
 
   /**
@@ -86,15 +129,11 @@ class GoogleDriveService {
       return this._cachedFolderId;
     }
 
-    const token = await this.requireToken();
-
     // Query for existing root folder
     const query = `name = '${VAULT_FOLDER_NAME}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
     const searchUrl = `${DRIVE_API_BASE}/files?q=${encodeURIComponent(query)}&fields=files(id,name,webViewLink)&spaces=drive`;
 
-    const searchRes = await fetch(searchUrl, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const searchRes = await this._fetch(searchUrl);
 
     if (!searchRes.ok) {
       const errText = await searchRes.text();
@@ -109,10 +148,9 @@ class GoogleDriveService {
     }
 
     // Create the root folder if it does not exist
-    const createRes = await fetch(`${DRIVE_API_BASE}/files`, {
+    const createRes = await this._fetch(`${DRIVE_API_BASE}/files`, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
@@ -148,13 +186,10 @@ class GoogleDriveService {
       return this._categoryFolderMap.get(folderName)!;
     }
 
-    const token = await this.requireToken();
     const query = `'${rootFolderId}' in parents and name = '${folderName}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
     const searchUrl = `${DRIVE_API_BASE}/files?q=${encodeURIComponent(query)}&fields=files(id,name)&spaces=drive`;
 
-    const res = await fetch(searchUrl, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const res = await this._fetch(searchUrl);
 
     if (res.ok) {
       const data = await res.json();
@@ -166,10 +201,9 @@ class GoogleDriveService {
     }
 
     // Create subfolder
-    const createRes = await fetch(`${DRIVE_API_BASE}/files`, {
+    const createRes = await this._fetch(`${DRIVE_API_BASE}/files`, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
@@ -218,9 +252,12 @@ class GoogleDriveService {
    */
   async getVaultInfo(): Promise<GoogleDriveVaultInfo | null> {
     try {
-      const token = await this.requireToken();
-      const folderId = await this.getOrCreateVaultFolder();
+      const hasToken = await this.hasToken();
+      if (!hasToken) {
+        return null;
+      }
 
+      const folderId = await this.getOrCreateVaultFolder();
       const files = await this.listAllVaultFiles();
       const manifestFile = files.find(f => f.name === 'vault-manifest.json');
       const supportedExtensions = ['.pdf', '.docx', '.doc', '.pptx', '.ppt'];
@@ -243,16 +280,13 @@ class GoogleDriveService {
    * List all files in the vault (including inside organized subfolders)
    */
   async listAllVaultFiles(): Promise<DriveFileInfo[]> {
-    const token = await this.requireToken();
     const rootFolderId = await this.getOrCreateVaultFolder();
 
     // Search by docPocketVault appProperty or root parent
     const query = `trashed = false and (appProperties has { key='docPocketVault' and value='true' } or '${rootFolderId}' in parents)`;
     const url = `${DRIVE_API_BASE}/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,size,modifiedTime,parents,appProperties)&spaces=drive&pageSize=1000`;
 
-    const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const res = await this._fetch(url);
 
     if (!res.ok) {
       const errText = await res.text();
@@ -267,8 +301,6 @@ class GoogleDriveService {
    * Upload or update a document file (PDF, PPTX, DOCX, etc.) to its organized category subfolder in Google Drive
    */
   async uploadDocument(docItem: DocumentItem, docBinary: ArrayBuffer): Promise<string> {
-    const token = await this.requireToken();
-
     // Determine target organized folder (e.g. Timetables, College, Certificates)
     const targetFolderId = await this.getOrCreateCategoryFolder(docItem.category || 'inbox');
 
@@ -288,10 +320,9 @@ class GoogleDriveService {
     if (existingFile) {
       // Update existing file content in Google Drive
       const updateUrl = `${DRIVE_UPLOAD_BASE}/files/${existingFile.id}?uploadType=media`;
-      const updateRes = await fetch(updateUrl, {
+      const updateRes = await this._fetch(updateUrl, {
         method: 'PATCH',
         headers: {
-          Authorization: `Bearer ${token}`,
           'Content-Type': mimeType,
         },
         body: docBinary,
@@ -331,10 +362,10 @@ class GoogleDriveService {
       { type: `multipart/related; boundary=${boundary}` }
     );
 
-    const uploadRes = await fetch(`${DRIVE_UPLOAD_BASE}/files?uploadType=multipart`, {
+    const uploadRes = await this._fetch(`${DRIVE_UPLOAD_BASE}/files?uploadType=multipart`, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${token}`,
+        'Content-Type': `multipart/related; boundary=${boundary}`,
       },
       body: multipartBody,
     });
@@ -352,7 +383,6 @@ class GoogleDriveService {
    * Save or update the vault-manifest.json in the root DocPocket Vault folder
    */
   async uploadManifest(manifest: BackupManifest): Promise<string> {
-    const token = await this.requireToken();
     const folderId = await this.getOrCreateVaultFolder();
 
     const existingFiles = await this.listAllVaultFiles();
@@ -361,10 +391,9 @@ class GoogleDriveService {
 
     if (existingManifest) {
       // Update media
-      const res = await fetch(`${DRIVE_UPLOAD_BASE}/files/${existingManifest.id}?uploadType=media`, {
+      const res = await this._fetch(`${DRIVE_UPLOAD_BASE}/files/${existingManifest.id}?uploadType=media`, {
         method: 'PATCH',
         headers: {
-          Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json; charset=UTF-8',
         },
         body: jsonStr,
@@ -401,9 +430,11 @@ class GoogleDriveService {
       { type: `multipart/related; boundary=${boundary}` }
     );
 
-    const res = await fetch(`${DRIVE_UPLOAD_BASE}/files?uploadType=multipart`, {
+    const res = await this._fetch(`${DRIVE_UPLOAD_BASE}/files?uploadType=multipart`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
+      headers: {
+        'Content-Type': `multipart/related; boundary=${boundary}`,
+      },
       body: multipartBody,
     });
 
@@ -419,14 +450,11 @@ class GoogleDriveService {
    * Fetch and parse vault-manifest.json from Google Drive
    */
   async fetchManifest(): Promise<BackupManifest | null> {
-    const token = await this.requireToken();
     const existingFiles = await this.listAllVaultFiles();
     const manifestFile = existingFiles.find(f => f.name === 'vault-manifest.json');
     if (!manifestFile) return null;
 
-    const res = await fetch(`${DRIVE_API_BASE}/files/${manifestFile.id}?alt=media`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const res = await this._fetch(`${DRIVE_API_BASE}/files/${manifestFile.id}?alt=media`);
 
     if (!res.ok) {
       throw new Error(`Failed to download vault-manifest from Google Drive: ${await res.text()}`);
@@ -439,10 +467,7 @@ class GoogleDriveService {
    * Download a PDF binary file by its Google Drive file ID
    */
   async downloadDocumentBinary(fileId: string): Promise<ArrayBuffer> {
-    const token = await this.requireToken();
-    const res = await fetch(`${DRIVE_API_BASE}/files/${fileId}?alt=media`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const res = await this._fetch(`${DRIVE_API_BASE}/files/${fileId}?alt=media`);
 
     if (!res.ok) {
       throw new Error(`Failed to download document from Google Drive: ${await res.text()}`);
@@ -455,10 +480,8 @@ class GoogleDriveService {
    * Delete a file from Google Drive
    */
   async deleteFile(fileId: string): Promise<void> {
-    const token = await this.requireToken();
-    const res = await fetch(`${DRIVE_API_BASE}/files/${fileId}`, {
+    const res = await this._fetch(`${DRIVE_API_BASE}/files/${fileId}`, {
       method: 'DELETE',
-      headers: { Authorization: `Bearer ${token}` },
     });
 
     if (!res.ok && res.status !== 404) {

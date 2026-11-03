@@ -59,6 +59,8 @@ import { documentService } from '../../lib/document-service';
 import { collectionService } from '../../lib/collection-service';
 import { formatBytes } from '../../lib/storage-service';
 import { OfficeViewer } from './OfficeViewer';
+import { PPTViewerModal } from './PPTViewerModal';
+import { WordViewerModal } from './WordViewerModal';
 
 interface PDFViewerModalProps {
   documentId: string | null;
@@ -1004,18 +1006,20 @@ export const PDFViewerModal: React.FC<PDFViewerModalProps> = ({
 
   if (!documentId) return null;
 
-  if (
-    docItem &&
-    (docItem.format === 'pptx' ||
-      docItem.format === 'ppt' ||
-      docItem.format === 'docx' ||
-      docItem.format === 'doc') &&
-    cachedBinaryRef.current
-  ) {
+  if (docItem && (docItem.format === 'pptx' || docItem.format === 'ppt')) {
     return (
-      <OfficeViewer
-        document={docItem}
-        binary={cachedBinaryRef.current}
+      <PPTViewerModal
+        documentId={docItem.id}
+        onClose={onClose}
+        onDocumentUpdated={onDocumentUpdated}
+      />
+    );
+  }
+
+  if (docItem && (docItem.format === 'docx' || docItem.format === 'doc')) {
+    return (
+      <WordViewerModal
+        documentId={docItem.id}
         onClose={onClose}
         onDocumentUpdated={onDocumentUpdated}
       />

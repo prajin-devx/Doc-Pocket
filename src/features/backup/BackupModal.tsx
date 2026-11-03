@@ -29,7 +29,8 @@ interface BackupModalProps {
   onRestoreComplete: () => void;
   initialTab?: 'drive' | 'export' | 'import';
   user: UserProfile | null;
-  onLoginGoogle: () => void;
+  hasDriveToken: boolean;
+  onLoginGoogle: () => Promise<boolean> | void;
   settings: AppSettings;
 }
 
@@ -39,6 +40,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
   onRestoreComplete,
   initialTab = 'drive',
   user,
+  hasDriveToken,
   onLoginGoogle,
   settings,
 }) => {
@@ -88,10 +90,10 @@ export const BackupModal: React.FC<BackupModalProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (isOpen && user) {
+    if (isOpen && user && hasDriveToken) {
       loadDriveVaultInfo();
     }
-  }, [isOpen, user]);
+  }, [isOpen, user, hasDriveToken]);
 
   const loadDriveVaultInfo = async () => {
     setIsLoadingDrive(true);
@@ -106,6 +108,11 @@ export const BackupModal: React.FC<BackupModalProps> = ({
   };
 
   const handleDriveBackup = async () => {
+    if (!hasDriveToken) {
+      const ok = await onLoginGoogle();
+      if (!ok) return;
+    }
+
     setIsDriveSyncing(true);
     setDriveActionResult(null);
     setDriveProgress({ percent: 5, status: 'Connecting to Google Drive...' });
@@ -129,6 +136,11 @@ export const BackupModal: React.FC<BackupModalProps> = ({
   };
 
   const handleDriveRestore = async () => {
+    if (!hasDriveToken) {
+      const ok = await onLoginGoogle();
+      if (!ok) return;
+    }
+
     const confirmed = window.confirm(
       'Restore entire document vault from your Google Drive? Any missing documents and collections will be loaded into your device.'
     );
@@ -375,15 +387,21 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                       <div>
                         <div className="flex items-center gap-2">
                           <p className="text-xs font-semibold text-white">{user.displayName || 'Google Account'}</p>
-                          <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
-                            CONNECTED
-                          </span>
+                          {hasDriveToken ? (
+                            <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                              CONNECTED
+                            </span>
+                          ) : (
+                            <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 border border-amber-500/30">
+                              RECONNECT NEEDED
+                            </span>
+                          )}
                         </div>
                         <p className="text-[11px] text-slate-400 truncate max-w-[200px] sm:max-w-xs">{user.email}</p>
                       </div>
                     </div>
 
-                    {vaultInfo?.folderUrl && (
+                    {hasDriveToken && vaultInfo?.folderUrl && (
                       <a
                         href={vaultInfo.folderUrl}
                         target="_blank"
@@ -395,6 +413,26 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                       </a>
                     )}
                   </div>
+
+                  {/* Reconnect notice if Drive token is not present */}
+                  {!hasDriveToken && (
+                    <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                      <div className="space-y-1">
+                        <p className="text-xs font-semibold text-white">Google Drive Token Expired</p>
+                        <p className="text-[11px] text-slate-300">
+                          Click Reconnect to refresh your Google Drive credentials and resume automatic backups.
+                        </p>
+                      </div>
+                      <button
+                        onClick={async () => {
+                          await onLoginGoogle();
+                        }}
+                        className="px-4 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-xs shadow-md transition shrink-0"
+                      >
+                        Reconnect Drive
+                      </button>
+                    </div>
+                  )}
 
                   {/* Vault Status Box */}
                   <div className="p-4 rounded-xl bg-slate-900/40 border border-slate-800/80 space-y-2.5">

@@ -30,6 +30,7 @@ interface SettingsModalProps {
   onClose: () => void;
   settings: AppSettings;
   user: UserProfile | null;
+  hasDriveToken?: boolean;
   onLoginGoogle: () => void;
   onLogout: () => void;
   onOpenLayoutModal: () => void;
@@ -44,6 +45,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onClose,
   settings,
   user,
+  hasDriveToken = true,
   onLoginGoogle,
   onLogout,
   onOpenLayoutModal,
@@ -147,9 +149,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <div>
                       <div className="flex items-center gap-2">
                         <p className="text-xs font-semibold text-white">{user.displayName || 'Google User'}</p>
-                        <span className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
-                          DRIVE SYNCED
-                        </span>
+                        {hasDriveToken ? (
+                          <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                            DRIVE SYNCED
+                          </span>
+                        ) : (
+                          <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 border border-amber-500/30">
+                            RECONNECT NEEDED
+                          </span>
+                        )}
                       </div>
                       <p className="text-[11px] text-slate-400 truncate max-w-[180px] sm:max-w-[240px]">
                         {user.email}
@@ -158,16 +166,26 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </div>
 
                   <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => {
-                        onClose();
-                        onOpenBackup('drive');
-                      }}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-sky-500/15 hover:bg-sky-500/25 text-sky-300 border border-sky-500/30 text-xs font-medium transition"
-                    >
-                      <Cloud className="w-3.5 h-3.5 text-sky-400" />
-                      <span>Drive Vault</span>
-                    </button>
+                    {!hasDriveToken ? (
+                      <button
+                        onClick={onLoginGoogle}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-semibold shadow-sm transition"
+                      >
+                        <Cloud className="w-3.5 h-3.5" />
+                        <span>Reconnect Drive</span>
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => {
+                          onClose();
+                          onOpenBackup('drive');
+                        }}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-sky-500/15 hover:bg-sky-500/25 text-sky-300 border border-sky-500/30 text-xs font-medium transition"
+                      >
+                        <Cloud className="w-3.5 h-3.5 text-sky-400" />
+                        <span>Drive Vault</span>
+                      </button>
+                    )}
                     <button
                       onClick={onLogout}
                       className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-medium transition"

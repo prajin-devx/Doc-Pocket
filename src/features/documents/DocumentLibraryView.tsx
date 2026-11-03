@@ -20,6 +20,7 @@ import {
   FolderInput,
   Loader2,
   Plus,
+  Presentation,
 } from 'lucide-react';
 import { CollectionItem, DocumentItem, SortField, SortOrder, ViewMode } from '../../types';
 import { DocumentCard } from './DocumentCard';
@@ -33,6 +34,7 @@ interface DocumentLibraryViewProps {
   collections: CollectionItem[];
   allTags: string[];
   initialCategory?: string;
+  initialFormat?: 'all' | 'pdf' | 'pptx' | 'docx';
   initialOnlyFavorites?: boolean;
   initialOnlyPinned?: boolean;
   initialSearchQuery?: string;
@@ -52,6 +54,7 @@ export const DocumentLibraryView: React.FC<DocumentLibraryViewProps> = ({
   collections,
   allTags,
   initialCategory = 'all',
+  initialFormat = 'all',
   initialOnlyFavorites = false,
   initialOnlyPinned = false,
   initialSearchQuery = '',
@@ -68,9 +71,28 @@ export const DocumentLibraryView: React.FC<DocumentLibraryViewProps> = ({
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
   const [searchQuery, setSearchQuery] = useState<string>(initialSearchQuery);
   const [selectedCategory, setSelectedCategory] = useState<string>(initialCategory);
+  const [formatFilter, setFormatFilter] = useState<'all' | 'pdf' | 'pptx' | 'docx'>(initialFormat);
   const [onlyFavorites, setOnlyFavorites] = useState<boolean>(initialOnlyFavorites);
   const [onlyPinned, setOnlyPinned] = useState<boolean>(initialOnlyPinned);
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (initialFormat) {
+      setFormatFilter(initialFormat);
+    }
+  }, [initialFormat]);
+
+  const formatCounts = useMemo(() => {
+    let pdfCount = 0;
+    let pptxCount = 0;
+    let docxCount = 0;
+    for (const d of documents) {
+      if (d.format === 'pptx' || d.format === 'ppt') pptxCount++;
+      else if (d.format === 'docx' || d.format === 'doc') docxCount++;
+      else pdfCount++;
+    }
+    return { pdfCount, pptxCount, docxCount };
+  }, [documents]);
 
   // Deep Full-Text Search inside PDF contents
   const [isDeepSearch, setIsDeepSearch] = useState<boolean>(false);
@@ -191,6 +213,17 @@ export const DocumentLibraryView: React.FC<DocumentLibraryViewProps> = ({
           }
         }
 
+        // Format filter
+        if (formatFilter === 'pptx' && doc.format !== 'pptx' && doc.format !== 'ppt') {
+          return false;
+        }
+        if (formatFilter === 'docx' && doc.format !== 'docx' && doc.format !== 'doc') {
+          return false;
+        }
+        if (formatFilter === 'pdf' && doc.format && doc.format !== 'pdf') {
+          return false;
+        }
+
         // Category filter
         if (selectedCategory !== 'all' && doc.category !== selectedCategory) {
           return false;
@@ -228,7 +261,7 @@ export const DocumentLibraryView: React.FC<DocumentLibraryViewProps> = ({
         }
         return sortOrder === 'asc' ? cmp : -cmp;
       });
-  }, [documents, searchQuery, selectedCategory, onlyFavorites, onlyPinned, selectedTag, sortField, sortOrder]);
+  }, [documents, searchQuery, selectedCategory, formatFilter, onlyFavorites, onlyPinned, selectedTag, sortField, sortOrder]);
 
   const toggleSelectAll = () => {
     if (selectedIds.size === filteredDocuments.length) {
@@ -260,6 +293,7 @@ export const DocumentLibraryView: React.FC<DocumentLibraryViewProps> = ({
   const resetAllFilters = () => {
     setSearchQuery('');
     setSelectedCategory('all');
+    setFormatFilter('all');
     setOnlyFavorites(false);
     setOnlyPinned(false);
     setSelectedTag(null);
@@ -268,6 +302,7 @@ export const DocumentLibraryView: React.FC<DocumentLibraryViewProps> = ({
   const hasActiveFilters =
     searchQuery.trim() !== '' ||
     selectedCategory !== 'all' ||
+    formatFilter !== 'all' ||
     onlyFavorites ||
     onlyPinned ||
     selectedTag !== null;
@@ -529,6 +564,63 @@ export const DocumentLibraryView: React.FC<DocumentLibraryViewProps> = ({
 
       {/* Category Pills & Quick Filter Chips */}
       <div className="space-y-2">
+        {/* Document Format Filter Pills */}
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 scrollbar-none text-xs">
+          <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mr-1 shrink-0">
+            Format:
+          </span>
+          <button
+            onClick={() => setFormatFilter('all')}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl font-medium whitespace-nowrap transition border ${
+              formatFilter === 'all'
+                ? 'bg-slate-700/80 text-white border-slate-600 shadow-sm'
+                : 'bg-slate-900/60 text-slate-400 border-slate-800 hover:text-slate-200'
+            }`}
+          >
+            <span>All Formats</span>
+            <span className="font-mono text-[10px] opacity-75">({documents.length})</span>
+          </button>
+
+          <button
+            onClick={() => setFormatFilter('pdf')}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl font-medium whitespace-nowrap transition border ${
+              formatFilter === 'pdf'
+                ? 'bg-rose-500/20 text-rose-300 border-rose-500/40 shadow-sm'
+                : 'bg-slate-900/60 text-slate-400 border-slate-800 hover:text-slate-200'
+            }`}
+          >
+            <FileText className="w-3.5 h-3.5 text-rose-400" />
+            <span>PDFs</span>
+            <span className="font-mono text-[10px] opacity-75">({formatCounts.pdfCount})</span>
+          </button>
+
+          <button
+            onClick={() => setFormatFilter('pptx')}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl font-medium whitespace-nowrap transition border ${
+              formatFilter === 'pptx'
+                ? 'bg-orange-500/20 text-orange-300 border-orange-500/40 shadow-sm'
+                : 'bg-slate-900/60 text-slate-400 border-slate-800 hover:text-slate-200'
+            }`}
+          >
+            <Presentation className="w-3.5 h-3.5 text-orange-400" />
+            <span>PowerPoint (.ppt)</span>
+            <span className="font-mono text-[10px] opacity-75">({formatCounts.pptxCount})</span>
+          </button>
+
+          <button
+            onClick={() => setFormatFilter('docx')}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl font-medium whitespace-nowrap transition border ${
+              formatFilter === 'docx'
+                ? 'bg-blue-500/20 text-blue-300 border-blue-500/40 shadow-sm'
+                : 'bg-slate-900/60 text-slate-400 border-slate-800 hover:text-slate-200'
+            }`}
+          >
+            <FileText className="w-3.5 h-3.5 text-blue-400" />
+            <span>Word Docs (.doc)</span>
+            <span className="font-mono text-[10px] opacity-75">({formatCounts.docxCount})</span>
+          </button>
+        </div>
+
         <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
           {/* All tab */}
           <button
